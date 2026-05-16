@@ -25,6 +25,19 @@ def booking_options():
     )
 
 
+def normalized_event_name(name: str) -> str:
+    return " ".join(name.split()).lower()
+
+
+def ensure_unique_event_names(event_payloads: list[BookingEventCreate]) -> None:
+    seen_event_names: set[str] = set()
+    for event_payload in event_payloads:
+        event_name = normalized_event_name(event_payload.name)
+        if event_name in seen_event_names:
+            raise HTTPException(status_code=409, detail="Event already exists for this booking")
+        seen_event_names.add(event_name)
+
+
 @router.get("", response_model=list[BookingRead])
 def list_bookings(db: Session = Depends(get_db)) -> list[Booking]:
     statement = select(Booking).options(*booking_options()).order_by(Booking.created_at.desc())
@@ -46,6 +59,8 @@ def create_booking(payload: BookingCreate, db: Session = Depends(get_db)) -> Boo
         raise HTTPException(status_code=404, detail="Client not found")
 
     event_payloads = payload.events
+    ensure_unique_event_names(event_payloads)
+
     booking = Booking(**payload.model_dump(exclude={"events"}))
     for event_payload in event_payloads:
         booking.events.append(_build_event(event_payload))
@@ -66,7 +81,36 @@ def add_booking_event(
     if booking is None:
         raise HTTPException(status_code=404, detail="Booking not found")
 
+    new_event_name = normalized_event_name(payload.name)
+    duplicate_event = any(
+        normalized_event_name(existing_event.name) == new_event_name for existing_event in booking.events
+    )
+    if duplicate_event:
+        raise HTTPException(status_code=409, detail="Event already exists for this booking")
+
     booking.events.append(_build_event(payload))
+    db.commit()
+    return get_booking(booking_id, db)
+
+
+@router.delete("/{booking_id}", status_code=204)
+def delete_booking(booking_id: int, db: Session = Depends(get_db)) -> None:
+    booking = db.get(Booking, booking_id)
+    if booking is None:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    db.delete(booking)
+    db.commit()
+
+
+@router.delete("/events/{event_id}", response_model=BookingRead)
+def delete_booking_event(event_id: int, db: Session = Depends(get_db)) -> Booking:
+    event = db.get(BookingEvent, event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    booking_id = event.booking_id
+    db.delete(event)
     db.commit()
     return get_booking(booking_id, db)
 
