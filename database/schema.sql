@@ -8,12 +8,12 @@ USE event_billing;
 CREATE TABLE IF NOT EXISTS clients (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(120) NOT NULL,
-  mobile VARCHAR(10) NOT NULL UNIQUE,
+  mobile VARCHAR(10) NOT NULL,
   address VARCHAR(255),
   notes VARCHAR(500),
   created_at DATETIME NOT NULL,
   INDEX ix_clients_name (name),
-  INDEX ix_clients_mobile (mobile)
+  UNIQUE KEY uq_clients_mobile (mobile)
 );
 
 -- Material master used when adding billed items to an event.
