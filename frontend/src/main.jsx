@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   CalendarDays,
@@ -21,8 +21,10 @@ import {
 import { bookings as initialBookings, inventoryItems as initialItems, payments as initialPayments } from "./data/sampleData";
 import "./styles/app.css";
 
-// Backend API root. All apiRequest() calls append their endpoint path to this.
-const API_BASE_URL = "http://127.0.0.1:8000/api";
+// Backend API root. On another device, 127.0.0.1 points at that device, so
+// default to the same host that served the frontend and only change the port.
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:8000/api`;
 
 // Sidebar/page configuration. Each item maps a page id to a label and icon.
 const navItems = [
@@ -265,6 +267,8 @@ function App() {
   const [modal, setModal] = useState(null);
   const [apiStatus, setApiStatus] = useState("Connecting to backend...");
   const [isSaving, setIsSaving] = useState(false);
+  const selectedBookingIdRef = useRef(initialBookings[0].id);
+  const isSavingRef = useRef(false);
   const filteredBookings = useMemo(
     () => filterBookings(bookingList, searchQuery),
     [bookingList, searchQuery]
@@ -279,8 +283,23 @@ function App() {
   );
 
   useEffect(() => {
+    selectedBookingIdRef.current = selectedBookingId;
+  }, [selectedBookingId]);
+
+  useEffect(() => {
+    isSavingRef.current = isSaving;
+  }, [isSaving]);
+
+  useEffect(() => {
     // On first load, replace sample data with real database data if available.
     refreshData();
+    const refreshInterval = window.setInterval(() => {
+      if (!document.hidden && !isSavingRef.current) {
+        refreshData(selectedBookingIdRef.current);
+      }
+    }, 3000);
+
+    return () => window.clearInterval(refreshInterval);
   }, []);
 
   async function refreshData(preferredBookingId = selectedBookingId) {
@@ -305,7 +324,7 @@ function App() {
           ? preferredBookingId
           : mappedBookings[0]?.id
       );
-      setApiStatus("Connected to MySQL");
+      setApiStatus(`Connected to MySQL via ${API_BASE_URL}`);
     } catch (error) {
       // If the backend is not running, keep the app usable with sample data.
       setApiStatus("Backend offline, showing local sample data");
