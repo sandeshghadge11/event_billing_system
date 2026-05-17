@@ -1,3 +1,14 @@
+
+
+cd /Users/sandesh/Developer/Python/event_billing_system/backend
+source .venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+cd /Users/sandesh/Developer/Python/event_billing_system/frontend
+npm run dev -- --host 0.0.0.0 --port 5173
+
+
+
 # Event Billing System
 
 Python/MySQL billing system for event managers and FX light suppliers.
