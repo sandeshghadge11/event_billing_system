@@ -476,6 +476,12 @@ th {
   width: min(100%, 980px);
 }
 
+.invoice-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
 .print-context {
   color: var(--muted);
   font-size: 13px;

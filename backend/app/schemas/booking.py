@@ -95,6 +95,13 @@ class PaymentRead(PaymentBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class BookingMailRequest(BaseModel):
+    """Request body for sending a booking bill over email."""
+
+    receiver_email: str | None = None
+    sender_email: str | None = None
+
+
 class BookingCreate(BaseModel):
     """Request body used by POST /api/bookings."""
 

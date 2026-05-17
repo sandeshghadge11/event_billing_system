@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import bookings, clients, event_types, items
+from app.api import bookings, clients, company_settings, event_types, items
 from app.core.config import settings
 from app.core.database import Base, SessionLocal, engine
 from app.services.seed import seed_database
@@ -27,6 +27,7 @@ app.include_router(clients.router, prefix="/api/clients", tags=["clients"])
 app.include_router(bookings.router, prefix="/api/bookings", tags=["bookings"])
 app.include_router(items.router, prefix="/api/items", tags=["items"])
 app.include_router(event_types.router, prefix="/api/event-types", tags=["event-types"])
+app.include_router(company_settings.router, prefix="/api/company-settings", tags=["company-settings"])
 
 
 @app.get("/api/health")

@@ -28,6 +28,18 @@ CREATE TABLE IF NOT EXISTS items (
   INDEX ix_items_name (name)
 );
 
+CREATE TABLE IF NOT EXISTS company_settings (
+  id INT PRIMARY KEY DEFAULT 1,
+  company_name VARCHAR(160) NOT NULL,
+  invoice_prefix VARCHAR(20) NOT NULL,
+  owner_mobile VARCHAR(30) NOT NULL,
+  default_advance DECIMAL(12, 2) NOT NULL DEFAULT 0,
+  send_mail VARCHAR(160) NOT NULL,
+  recv_mail VARCHAR(160) NOT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL
+);
+
 -- Parent booking/order record. Each booking belongs to one client.
 CREATE TABLE IF NOT EXISTS bookings (
   id INT AUTO_INCREMENT PRIMARY KEY,

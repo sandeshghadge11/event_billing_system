@@ -8,6 +8,7 @@ import {
   LibraryBig,
   Landmark,
   ListChecks,
+  Mail,
   Plus,
   ReceiptText,
   Search,
@@ -106,6 +107,28 @@ function mapEventTypeFromApi(eventType) {
     id: eventType.id,
     name: eventType.name,
     status: eventType.status
+  };
+}
+
+function mapCompanySettingsFromApi(settings) {
+  return {
+    companyName: settings.company_name,
+    invoicePrefix: settings.invoice_prefix,
+    ownerMobile: settings.owner_mobile,
+    defaultAdvance: String(Number(settings.default_advance)),
+    sendMail: settings.send_mail,
+    recvMail: settings.recv_mail
+  };
+}
+
+function mapCompanySettingsToApi(settings) {
+  return {
+    company_name: settings.companyName,
+    invoice_prefix: settings.invoicePrefix,
+    owner_mobile: settings.ownerMobile,
+    default_advance: Number(settings.defaultAdvance) || 0,
+    send_mail: settings.sendMail,
+    recv_mail: settings.recvMail
   };
 }
 
@@ -208,6 +231,17 @@ function bookingTotals(booking, paymentList = initialPayments) {
   };
 }
 
+function filterBookings(bookings, query) {
+  const searchText = query.trim().toLowerCase();
+  if (!searchText) return bookings;
+
+  return bookings.filter((booking) => {
+    const clientName = booking.client.name.toLowerCase();
+    const mobile = booking.client.mobile.toLowerCase();
+    return clientName.includes(searchText) || mobile.includes(searchText);
+  });
+}
+
 function App() {
   // activePage controls which screen is rendered inside the main content area.
   const [activePage, setActivePage] = useState("dashboard");
@@ -216,16 +250,32 @@ function App() {
   const [itemList, setItemList] = useState(initialItems);
   const [paymentList, setPaymentList] = useState(initialPayments);
   const [eventTypeList, setEventTypeList] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [companySettings, setCompanySettings] = useState({
+    companyName: "Prasad FX Lights",
+    invoicePrefix: "PFX",
+    ownerMobile: "+91 98765 43210",
+    defaultAdvance: "0",
+    sendMail: "sandeshghadge301@gmail.com",
+    recvMail: "sandeshghadge301@gmail.com"
+  });
   // selectedBookingId drives the booking detail and invoice preview screens.
   const [selectedBookingId, setSelectedBookingId] = useState(initialBookings[0].id);
   // modal stores which dialog is open and any context it needs, such as eventId.
   const [modal, setModal] = useState(null);
   const [apiStatus, setApiStatus] = useState("Connecting to backend...");
   const [isSaving, setIsSaving] = useState(false);
+  const filteredBookings = useMemo(
+    () => filterBookings(bookingList, searchQuery),
+    [bookingList, searchQuery]
+  );
   // Memoized so the selected booking is recomputed only when the list/id changes.
   const selectedBooking = useMemo(
-    () => bookingList.find((booking) => booking.id === selectedBookingId) ?? bookingList[0] ?? null,
-    [bookingList, selectedBookingId]
+    () => {
+      const sourceBookings = searchQuery.trim() ? filteredBookings : bookingList;
+      return sourceBookings.find((booking) => booking.id === selectedBookingId) ?? sourceBookings[0] ?? null;
+    },
+    [bookingList, filteredBookings, searchQuery, selectedBookingId]
   );
 
   useEffect(() => {
@@ -260,6 +310,19 @@ function App() {
       // If the backend is not running, keep the app usable with sample data.
       setApiStatus("Backend offline, showing local sample data");
       setEventTypeList([]);
+    }
+  }
+
+  useEffect(() => {
+    loadCompanySettings();
+  }, []);
+
+  async function loadCompanySettings() {
+    try {
+      const apiSettings = await apiRequest("/company-settings");
+      setCompanySettings(mapCompanySettingsFromApi(apiSettings));
+    } catch (error) {
+      showSaveError("Could not load company settings", error);
     }
   }
 
@@ -305,6 +368,19 @@ function App() {
           events: []
         })
       });
+
+      const advanceAmount = Number(payload.advance) || 0;
+      if (advanceAmount > 0) {
+        await apiRequest(`/bookings/${booking.id}/payments`, {
+          method: "POST",
+          body: JSON.stringify({
+            amount: advanceAmount,
+            payment_date: payload.startDate || null,
+            mode: payload.advanceMode || "Cash",
+            notes: "Advance collected during booking creation"
+          })
+        });
+      }
 
       setModal(null);
       setActivePage("bookings");
@@ -554,6 +630,37 @@ function App() {
     }
   }
 
+  async function sendBillMail(bookingId) {
+    setIsSaving(true);
+    try {
+      const response = await apiRequest(`/bookings/${bookingId}/send-mail`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      alert(response.message || "Bill email sent.");
+    } catch (error) {
+      showSaveError("Could not send bill email", error);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function saveCompanySettings(nextSettings) {
+    setIsSaving(true);
+    try {
+      const apiSettings = await apiRequest("/company-settings", {
+        method: "PUT",
+        body: JSON.stringify(mapCompanySettingsToApi(nextSettings))
+      });
+      setCompanySettings(mapCompanySettingsFromApi(apiSettings));
+      alert("Company settings saved.");
+    } catch (error) {
+      showSaveError("Could not save company settings", error);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -593,7 +700,11 @@ function App() {
           <div className="top-actions">
             <label className="search-box">
               <Search size={17} />
-              <input placeholder="Search client, booking, mobile" />
+              <input
+                placeholder="Search client name or mobile"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+              />
             </label>
             <button className="primary-action" onClick={() => setModal({ type: "booking" })} type="button">
               <Plus size={18} />
@@ -606,7 +717,7 @@ function App() {
         {activePage === "dashboard" && <Dashboard bookings={bookingList} items={itemList} payments={paymentList} />}
         {activePage === "bookings" && (
           <BookingsPage
-            bookings={bookingList}
+            bookings={filteredBookings}
             selectedBooking={selectedBooking}
             selectedBookingId={selectedBookingId}
             onSelectBooking={setSelectedBookingId}
@@ -621,16 +732,36 @@ function App() {
             onOpenInvoice={() => setActivePage("invoice")}
           />
         )}
-        {activePage === "invoice" && <InvoicePreview booking={selectedBooking} payments={paymentList} />}
+        {activePage === "invoice" && (
+          <InvoicePreview
+            booking={selectedBooking}
+            companySettings={companySettings}
+            isSaving={isSaving}
+            onSendMail={sendBillMail}
+            payments={paymentList}
+          />
+        )}
         {activePage === "events" && (
           <EventTypesPage eventTypes={eventTypeList} onAddEventType={() => setModal({ type: "eventType" })} />
         )}
         {activePage === "items" && <ItemsPage items={itemList} onAddMaterial={() => setModal({ type: "material" })} />}
-        {activePage === "settings" && <SettingsPage />}
+        {activePage === "settings" && (
+          <SettingsPage
+            isSaving={isSaving}
+            onChange={setCompanySettings}
+            onSave={saveCompanySettings}
+            settings={companySettings}
+          />
+        )}
       </main>
 
       {modal?.type === "booking" && (
-        <BookingModal isSaving={isSaving} onClose={() => setModal(null)} onSubmit={addBooking} />
+        <BookingModal
+          defaultAdvance={companySettings.defaultAdvance}
+          isSaving={isSaving}
+          onClose={() => setModal(null)}
+          onSubmit={addBooking}
+        />
       )}
       {modal?.type === "material" && (
         <MaterialModal isSaving={isSaving} onClose={() => setModal(null)} onSubmit={addMaterial} />
@@ -923,7 +1054,7 @@ function BookingDetail({
   );
 }
 
-function InvoicePreview({ booking, payments }) {
+function InvoicePreview({ booking, companySettings, isSaving, onSendMail, payments }) {
   if (!booking) {
     return (
       <section className="surface empty-panel">
@@ -942,22 +1073,28 @@ function InvoicePreview({ booking, payments }) {
     <section className="invoice-stage">
       <div className="invoice-toolbar">
         <span className="print-context">Printing bill for {booking.client.name}</span>
-        <button className="primary-action" onClick={() => window.print()} type="button">Print Bill</button>
+        <div className="invoice-actions">
+          <button className="ghost-button" disabled={isSaving} onClick={() => onSendMail(booking.id)} type="button">
+            <Mail size={16} />
+            Send Mail
+          </button>
+          <button className="primary-action" onClick={() => window.print()} type="button">Print Bill</button>
+        </div>
       </div>
 
       <div className="invoice-page">
         <header className="bill-header">
           <div className="bill-brand">
-            <div className="large-logo">PFX</div>
+            <div className="large-logo">{companySettings.invoicePrefix}</div>
             <div>
               <span className="eyebrow">Final Bill</span>
-              <h2>Prasad FX Lights</h2>
+              <h2>{companySettings.companyName}</h2>
               <p>Laser, LED, Sharpee and FX lighting supplier</p>
             </div>
           </div>
           <div className="bill-id-card">
             <span>Invoice No.</span>
-            <strong>PFX-{booking.bookingNo}</strong>
+            <strong>{companySettings.invoicePrefix}-{booking.bookingNo}</strong>
             <small>{booking.startDate}</small>
           </div>
         </header>
@@ -1150,7 +1287,7 @@ function Modal({ title, onClose, children }) {
   );
 }
 
-function BookingModal({ isSaving, onClose, onSubmit }) {
+function BookingModal({ defaultAdvance, isSaving, onClose, onSubmit }) {
   // Local form state is submitted to App.addBooking(), which performs API calls.
   const [form, setForm] = useState({
     title: "",
@@ -1158,7 +1295,9 @@ function BookingModal({ isSaving, onClose, onSubmit }) {
     mobile: "",
     address: "",
     startDate: "",
-    endDate: ""
+    endDate: "",
+    advance: defaultAdvance || "",
+    advanceMode: "Cash"
   });
 
   return (
@@ -1183,6 +1322,16 @@ function BookingModal({ isSaving, onClose, onSubmit }) {
         <label>Address<input value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} /></label>
         <label>Start Date<input type="date" value={form.startDate} onChange={(event) => setForm({ ...form, startDate: event.target.value })} /></label>
         <label>End Date<input type="date" value={form.endDate} onChange={(event) => setForm({ ...form, endDate: event.target.value })} /></label>
+        <label>Advance<input min="0" type="number" value={form.advance} onChange={(event) => setForm({ ...form, advance: event.target.value })} /></label>
+        <label>
+          Advance Mode
+          <select value={form.advanceMode} onChange={(event) => setForm({ ...form, advanceMode: event.target.value })}>
+            <option>Cash</option>
+            <option>UPI</option>
+            <option>Bank Transfer</option>
+            <option>Cheque</option>
+          </select>
+        </label>
         <div className="modal-actions">
           <button className="ghost-button" disabled={isSaving} onClick={onClose} type="button">Cancel</button>
           <button className="primary-action" disabled={isSaving} type="submit">{isSaving ? "Saving..." : "Create Booking"}</button>
@@ -1367,16 +1516,29 @@ function PaymentModal({ balance, isSaving, onClose, onSubmit }) {
   );
 }
 
-function SettingsPage() {
-  // Static settings form placeholder for future company/invoice configuration.
+function SettingsPage({ isSaving, settings, onChange, onSave }) {
+  function updateSetting(field, value) {
+    onChange({
+      ...settings,
+      [field]: value
+    });
+  }
+
   return (
     <section className="surface settings-panel">
-      <h2>Company Settings</h2>
-      <div className="form-grid">
-        <label>Company Name<input defaultValue="Prasad FX Lights" /></label>
-        <label>Invoice Prefix<input defaultValue="PFX" /></label>
-        <label>Owner Mobile<input defaultValue="+91 98765 43210" /></label>
-        <label>Default Advance<input defaultValue="0" /></label>
+      <div className="section-heading">
+        <h2>Company Settings</h2>
+        <button className="primary-action" disabled={isSaving} onClick={() => onSave(settings)} type="button">
+          {isSaving ? "Saving..." : "Save"}
+        </button>
+      </div>
+      <div className="form-grid settings-form">
+        <label>Company Name<input value={settings.companyName} onChange={(event) => updateSetting("companyName", event.target.value)} /></label>
+        <label>Invoice Prefix<input value={settings.invoicePrefix} onChange={(event) => updateSetting("invoicePrefix", event.target.value)} /></label>
+        <label>Owner Mobile<input value={settings.ownerMobile} onChange={(event) => updateSetting("ownerMobile", event.target.value)} /></label>
+        <label>Default Advance<input min="0" type="number" value={settings.defaultAdvance} onChange={(event) => updateSetting("defaultAdvance", event.target.value)} /></label>
+        <label>Send Mail<input type="email" value={settings.sendMail} onChange={(event) => updateSetting("sendMail", event.target.value)} /></label>
+        <label>Receiver Mail<input type="email" value={settings.recvMail} onChange={(event) => updateSetting("recvMail", event.target.value)} /></label>
       </div>
     </section>
   );
