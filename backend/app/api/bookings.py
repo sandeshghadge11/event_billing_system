@@ -287,7 +287,7 @@ def _get_company_settings(db: Session) -> CompanySettings:
     return company_settings
 
 
-def _booking_bill_lines(booking: Booking, company_settings: CompanySettings) -> list[str]:
+def _booking_totals(booking: Booking) -> tuple[Decimal, Decimal, Decimal]:
     subtotal = sum(
         (
             sum((line.quantity * line.rate for line in event.line_items), Decimal("0"))
@@ -297,52 +297,117 @@ def _booking_bill_lines(booking: Booking, company_settings: CompanySettings) -> 
     )
     paid = sum((payment.amount for payment in booking.payments), Decimal("0"))
     balance = subtotal - paid
-    lines = [
-        company_settings.company_name,
-        f"Invoice No: {company_settings.invoice_prefix}-{booking.booking_no}",
-        f"Booking: {booking.title}",
-        f"Client: {booking.client.name}",
-        f"Mobile: {booking.client.mobile}",
-        f"Company Mobile: {company_settings.owner_mobile}",
-        "",
-        "Events",
-    ]
-
-    for event in booking.events:
-        event_total = sum((line.quantity * line.rate for line in event.line_items), Decimal("0"))
-        lines.append(f"- {event.name} | {event.event_date or ''} | {event.venue or ''} | {event_total}")
-        for line in event.line_items:
-            lines.append(f"  {line.material_name}: {line.quantity} x {line.rate} = {line.quantity * line.rate}")
-
-    lines.extend(
-        [
-            "",
-            f"Subtotal: {subtotal}",
-            f"Advance Paid: {paid}",
-            f"Balance Due: {balance}",
-            "",
-            "Thank you for your business.",
-        ]
-    )
-    return lines
+    return subtotal, paid, balance
 
 
 def _booking_bill_pdf(booking: Booking, company_settings: CompanySettings) -> bytes:
-    lines = _booking_bill_lines(booking, company_settings)
-    content_lines = ["BT", "/F1 11 Tf", "50 790 Td", "14 TL"]
-    for index, line in enumerate(lines[:48]):
-        if index:
-            content_lines.append("T*")
-        content_lines.append(f"({_pdf_escape(line)}) Tj")
-    content_lines.append("ET")
-    stream = "\n".join(content_lines).encode("latin-1", errors="replace")
+    subtotal, paid, balance = _booking_totals(booking)
+    payment_status = "Pending" if balance > 0 else "Done"
+    commands: list[str] = []
+
+    _rect(commands, 34, 34, 527, 774, fill="1 1 1", stroke="0.831 0.858 0.902")
+    _line(commands, 58, 730, 537, 730, color="0.059 0.353 0.643", width=2.4)
+    _rect(commands, 58, 742, 86, 50, fill="0.059 0.353 0.643")
+    _text(commands, company_settings.invoice_prefix[:8], 77, 761, size=18, font="F2", color="1 1 1")
+    _text(commands, "FINAL BILL", 160, 779, size=8, font="F2", color="0.392 0.455 0.545")
+    _text(commands, company_settings.company_name.upper(), 160, 754, size=22, font="F2")
+    _text(commands, "Laser, LED, Sharpee and FX lighting supplier", 160, 738, size=9, color="0.392 0.455 0.545")
+    _rect(commands, 400, 744, 137, 48, fill="0.969 0.980 0.988", stroke="0.827 0.859 0.902")
+    _text(commands, "INVOICE NO.", 418, 776, size=7, font="F2", color="0.392 0.455 0.545")
+    _text(commands, f"{company_settings.invoice_prefix}-{booking.booking_no}", 418, 760, size=13, font="F2")
+    _text(commands, _date_text(booking.start_date), 418, 748, size=8, color="0.392 0.455 0.545")
+
+    _info_box(commands, 58, 655, 145, "BILL TO", [booking.client.name, booking.client.mobile, booking.client.address or ""])
+    _info_box(
+        commands,
+        224,
+        655,
+        170,
+        "BOOKING",
+        [
+            booking.title,
+            f"{_date_text(booking.start_date)} to {_date_text(booking.end_date)}",
+            f"{len(booking.events)} linked event entries",
+        ],
+    )
+    _info_box(commands, 418, 655, 119, "AMOUNT DUE", [_money(balance), f"Status: {payment_status}"], highlight=True)
+
+    y = 610
+    for index, event in enumerate(booking.events, start=1):
+        visible_lines = list(event.line_items)[:6]
+        event_height = 62 + (max(len(visible_lines), 1) * 18) + 22
+        if y - event_height < 205:
+            _text(commands, "More event details continue in the app preview.", 58, y, size=8, color="0.392 0.455 0.545")
+            break
+
+        event_total = sum((line.quantity * line.rate for line in event.line_items), Decimal("0"))
+        _rect(commands, 58, y - event_height, 479, event_height, stroke="0.827 0.859 0.902")
+        _rect(commands, 58, y - 34, 479, 34, fill="0.961 0.973 0.988", stroke="0.827 0.859 0.902")
+        _text(commands, f"EVENT {index}", 74, y - 13, size=7, font="F2", color="0.392 0.455 0.545")
+        _text(commands, event.name, 74, y - 27, size=12, font="F2")
+        _text(commands, _date_text(event.event_date), 458, y - 13, size=8, font="F2", align="right")
+        _text(commands, event.venue or "", 458, y - 27, size=8, color="0.392 0.455 0.545", align="right")
+
+        table_y = y - 52
+        _rect(commands, 58, table_y - 16, 479, 16, fill="0.059 0.353 0.643")
+        _text(commands, "Material", 72, table_y - 12, size=8, font="F2", color="1 1 1")
+        _text(commands, "Qty", 355, table_y - 12, size=8, font="F2", color="1 1 1", align="right")
+        _text(commands, "Rate", 440, table_y - 12, size=8, font="F2", color="1 1 1", align="right")
+        _text(commands, "Amount", 522, table_y - 12, size=8, font="F2", color="1 1 1", align="right")
+
+        row_y = table_y - 34
+        if visible_lines:
+            for line in visible_lines:
+                _text(commands, line.material_name, 72, row_y, size=8)
+                _text(commands, _quantity(line.quantity), 355, row_y, size=8, align="right")
+                _text(commands, _money(line.rate), 440, row_y, size=8, align="right")
+                _text(commands, _money(line.quantity * line.rate), 522, row_y, size=8, align="right")
+                _line(commands, 58, row_y - 7, 537, row_y - 7, color="0.925 0.941 0.961", width=0.6)
+                row_y -= 18
+        else:
+            _text(commands, "No material added yet.", 72, row_y, size=8, color="0.392 0.455 0.545")
+            row_y -= 18
+
+        _rect(commands, 58, y - event_height, 479, 20, fill="0.976 0.984 0.992")
+        _text(commands, "Event Subtotal", 420, y - event_height + 7, size=8, font="F2", color="0.059 0.353 0.643", align="right")
+        _text(commands, _money(event_total), 522, y - event_height + 7, size=8, font="F2", color="0.059 0.353 0.643", align="right")
+        y -= event_height + 14
+
+    bottom_y = 78
+    _rect(commands, 58, bottom_y, 270, 98, stroke="0.827 0.859 0.902")
+    _text(commands, "Payments", 74, bottom_y + 76, size=12, font="F2")
+    payment_y = bottom_y + 58
+    if booking.payments:
+        for payment in list(booking.payments)[:4]:
+            _text(commands, _date_text(payment.payment_date), 74, payment_y, size=8, color="0.392 0.455 0.545")
+            _text(commands, payment.mode, 160, payment_y, size=8)
+            _text(commands, _money(payment.amount), 310, payment_y, size=8, font="F2", align="right")
+            payment_y -= 16
+    else:
+        _text(commands, "No advance payment recorded.", 74, payment_y, size=8, color="0.392 0.455 0.545")
+
+    _rect(commands, 350, bottom_y, 187, 98, fill="0.067 0.094 0.153")
+    _text(commands, "Subtotal", 368, bottom_y + 70, size=9, color="0.796 0.835 0.882")
+    _text(commands, _money(subtotal), 518, bottom_y + 70, size=9, font="F2", color="1 1 1", align="right")
+    _text(commands, "Advance Paid", 368, bottom_y + 48, size=9, color="0.796 0.835 0.882")
+    _text(commands, _money(paid), 518, bottom_y + 48, size=9, font="F2", color="1 1 1", align="right")
+    _line(commands, 366, bottom_y + 32, 521, bottom_y + 32, color="0.247 0.290 0.357", width=0.8)
+    _text(commands, "Balance Due", 368, bottom_y + 16, size=11, color="0.796 0.835 0.882")
+    _text(commands, _money(balance), 518, bottom_y + 16, size=11, font="F2", color="1 1 1", align="right")
+
+    _rect(commands, 58, 44, 479, 22, fill="0.933 0.965 0.992", stroke="0.784 0.875 0.953")
+    _text(commands, "Thank you for your business.", 74, 52, size=9, font="F2")
+    _text(commands, "All materials are billed event-wise and linked under this wedding booking.", 522, 52, size=7, color="0.392 0.455 0.545", align="right")
+
+    stream = "\n".join(commands).encode("latin-1", errors="replace")
 
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 6 0 R >> >> /Contents 5 0 R >>",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
     ]
 
     pdf = bytearray(b"%PDF-1.4\n")
@@ -365,4 +430,90 @@ def _booking_bill_pdf(booking: Booking, company_settings: CompanySettings) -> by
 
 
 def _pdf_escape(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    return str(value).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _text(
+    commands: list[str],
+    value: str,
+    x: int | float,
+    y: int | float,
+    *,
+    size: int | float = 10,
+    font: str = "F1",
+    color: str = "0.067 0.094 0.153",
+    align: str = "left",
+) -> None:
+    text = _clip_text(str(value), 54 if size <= 8 else 36)
+    text_width = len(text) * size * 0.48
+    draw_x = x - text_width if align == "right" else x
+    commands.append(f"{color} rg")
+    commands.append(f"BT /{font} {size} Tf {draw_x:.2f} {y:.2f} Td ({_pdf_escape(text)}) Tj ET")
+
+
+def _rect(
+    commands: list[str],
+    x: int | float,
+    y: int | float,
+    width: int | float,
+    height: int | float,
+    *,
+    fill: str | None = None,
+    stroke: str | None = None,
+) -> None:
+    if fill:
+        commands.append(f"{fill} rg")
+    if stroke:
+        commands.append(f"{stroke} RG")
+    operator = "B" if fill and stroke else "f" if fill else "S"
+    commands.append(f"{x:.2f} {y:.2f} {width:.2f} {height:.2f} re {operator}")
+
+
+def _line(
+    commands: list[str],
+    x1: int | float,
+    y1: int | float,
+    x2: int | float,
+    y2: int | float,
+    *,
+    color: str = "0 0 0",
+    width: int | float = 1,
+) -> None:
+    commands.append(f"{color} RG {width} w {x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S")
+
+
+def _info_box(
+    commands: list[str],
+    x: int,
+    y: int,
+    width: int,
+    label: str,
+    values: list[str],
+    *,
+    highlight: bool = False,
+) -> None:
+    _line(commands, x, y - 60, x, y, color="0.898 0.929 0.965", width=3)
+    _text(commands, label, x + 12, y - 10, size=7, font="F2", color="0.392 0.455 0.545")
+    _text(commands, values[0], x + 12, y - 28, size=17 if highlight else 11, font="F2", color="0.059 0.353 0.643" if highlight else "0.067 0.094 0.153")
+    for index, value in enumerate(values[1:], start=1):
+        _text(commands, value, x + 12, y - 28 - (index * 14), size=8, color="0.392 0.455 0.545")
+
+
+def _clip_text(value: str, length: int) -> str:
+    clean_value = " ".join(str(value or "").split())
+    if len(clean_value) <= length:
+        return clean_value
+    return f"{clean_value[: max(length - 3, 0)]}..."
+
+
+def _date_text(value) -> str:
+    return value.isoformat() if value else ""
+
+
+def _money(value: Decimal) -> str:
+    return f"Rs. {value:,.2f}"
+
+
+def _quantity(value: Decimal) -> str:
+    normalized = value.normalize()
+    return f"{normalized:f}"
