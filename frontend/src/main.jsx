@@ -1192,7 +1192,7 @@ function InvoicePreview({ booking, companySettings, isSaving, onSendMail, paymen
 
         <div className="bill-note">
           <strong>Thank you for your business.</strong>
-          <span>All materials are billed event-wise and linked under this wedding booking.</span>
+          <span>Visit Again</span>
         </div>
       </div>
     </section>

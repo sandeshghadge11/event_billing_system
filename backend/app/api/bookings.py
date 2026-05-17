@@ -2,7 +2,7 @@ import smtplib
 from decimal import Decimal
 from email.message import EmailMessage
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload, with_loader_criteria
 
@@ -265,6 +265,20 @@ def send_booking_bill(
     return {"message": "Bill email sent"}
 
 
+@router.get("/{booking_id}/bill-pdf")
+def download_booking_bill_pdf(booking_id: int, db: Session = Depends(get_db)) -> Response:
+    """Return the same PDF that is attached to the bill email."""
+
+    company_settings = _get_company_settings(db)
+    booking = get_booking(booking_id, db)
+    filename = f"{company_settings.invoice_prefix}-{booking.booking_no}.pdf"
+    return Response(
+        content=_booking_bill_pdf(booking, company_settings),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
 def _build_event(payload: BookingEventCreate) -> BookingEvent:
     """Convert a nested event request into SQLAlchemy event and line-item rows."""
 
@@ -334,44 +348,45 @@ def _booking_bill_pdf(booking: Booking, company_settings: CompanySettings) -> by
 
     y = 610
     for index, event in enumerate(booking.events, start=1):
-        visible_lines = list(event.line_items)[:6]
-        event_height = 62 + (max(len(visible_lines), 1) * 18) + 22
-        if y - event_height < 205:
+        visible_lines = list(event.line_items)[:4]
+        row_count = max(len(visible_lines), 1)
+        event_height = 58 + (row_count * 16) + 18
+        if y - event_height < 190:
             _text(commands, "More event details continue in the app preview.", 58, y, size=8, color="0.392 0.455 0.545")
             break
 
         event_total = sum((line.quantity * line.rate for line in event.line_items), Decimal("0"))
         _rect(commands, 58, y - event_height, 479, event_height, stroke="0.827 0.859 0.902")
-        _rect(commands, 58, y - 34, 479, 34, fill="0.961 0.973 0.988", stroke="0.827 0.859 0.902")
+        _rect(commands, 58, y - 32, 479, 32, fill="0.961 0.973 0.988", stroke="0.827 0.859 0.902")
         _text(commands, f"EVENT {index}", 74, y - 13, size=7, font="F2", color="0.392 0.455 0.545")
         _text(commands, event.name, 74, y - 27, size=12, font="F2")
         _text(commands, _date_text(event.event_date), 458, y - 13, size=8, font="F2", align="right")
         _text(commands, event.venue or "", 458, y - 27, size=8, color="0.392 0.455 0.545", align="right")
 
-        table_y = y - 52
+        table_y = y - 48
         _rect(commands, 58, table_y - 16, 479, 16, fill="0.059 0.353 0.643")
         _text(commands, "Material", 72, table_y - 12, size=8, font="F2", color="1 1 1")
         _text(commands, "Qty", 355, table_y - 12, size=8, font="F2", color="1 1 1", align="right")
         _text(commands, "Rate", 440, table_y - 12, size=8, font="F2", color="1 1 1", align="right")
         _text(commands, "Amount", 522, table_y - 12, size=8, font="F2", color="1 1 1", align="right")
 
-        row_y = table_y - 34
+        row_y = table_y - 31
         if visible_lines:
             for line in visible_lines:
                 _text(commands, line.material_name, 72, row_y, size=8)
                 _text(commands, _quantity(line.quantity), 355, row_y, size=8, align="right")
                 _text(commands, _money(line.rate), 440, row_y, size=8, align="right")
                 _text(commands, _money(line.quantity * line.rate), 522, row_y, size=8, align="right")
-                _line(commands, 58, row_y - 7, 537, row_y - 7, color="0.925 0.941 0.961", width=0.6)
-                row_y -= 18
+                _line(commands, 58, row_y - 6, 537, row_y - 6, color="0.925 0.941 0.961", width=0.6)
+                row_y -= 16
         else:
             _text(commands, "No material added yet.", 72, row_y, size=8, color="0.392 0.455 0.545")
-            row_y -= 18
+            row_y -= 16
 
         _rect(commands, 58, y - event_height, 479, 20, fill="0.976 0.984 0.992")
         _text(commands, "Event Subtotal", 420, y - event_height + 7, size=8, font="F2", color="0.059 0.353 0.643", align="right")
         _text(commands, _money(event_total), 522, y - event_height + 7, size=8, font="F2", color="0.059 0.353 0.643", align="right")
-        y -= event_height + 14
+        y -= event_height + 12
 
     bottom_y = 78
     _rect(commands, 58, bottom_y, 270, 98, stroke="0.827 0.859 0.902")
@@ -397,7 +412,7 @@ def _booking_bill_pdf(booking: Booking, company_settings: CompanySettings) -> by
 
     _rect(commands, 58, 44, 479, 22, fill="0.933 0.965 0.992", stroke="0.784 0.875 0.953")
     _text(commands, "Thank you for your business.", 74, 52, size=9, font="F2")
-    _text(commands, "All materials are billed event-wise and linked under this wedding booking.", 522, 52, size=7, color="0.392 0.455 0.545", align="right")
+    _text(commands, "Visit Again.", 522, 52, size=7, color="0.392 0.455 0.545", align="right")
 
     stream = "\n".join(commands).encode("latin-1", errors="replace")
 
