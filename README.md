@@ -4,9 +4,9 @@ Python/MySQL billing system for event managers and FX light suppliers.
 
 Current focus:
 
-- Frontend pages for bookings, linked wedding events, material master, and invoice preview.
-- FastAPI backend scaffold for clients, bookings, linked events, materials, and payments.
-- Frontend still uses mock data while the user flow is being finalized.
+- Frontend pages for bookings, linked wedding events, material master, payment entry, and invoice preview.
+- FastAPI backend for clients, bookings, linked events, materials, and payments.
+- Frontend loads live API data when the backend is running, with sample data as an offline fallback.
 
 Planned stack:
 
@@ -17,9 +17,9 @@ Planned stack:
 ## Frontend
 
 ```bash
-cd frontend
+cd /Users/sandesh/Developer/Python/event_billing_system/frontend
 npm install
-npm run dev -- --host 127.0.0.1
+npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
 Open:
@@ -42,16 +42,19 @@ Update `DATABASE_URL` in `.env` with your local MySQL username, password, host, 
 Install and run:
 
 ```bash
+cd /Users/sandesh/Developer/Python/event_billing_system/backend
+source .venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+For a fresh setup, create the virtual environment and install dependencies once:
+
+```bash
+cd /Users/sandesh/Developer/Python/event_billing_system/backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
-
-Load starter materials and the sample Waghmare wedding:
-
-```bash
-python seed.py
+python3 seed.py
 ```
 
 API health check:

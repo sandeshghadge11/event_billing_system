@@ -18,6 +18,11 @@ router = APIRouter()
 
 
 def booking_options():
+    """Eager-load nested data needed by BookingRead responses."""
+
+    # These options tell SQLAlchemy to fetch client, events, line items, and
+    # payments together. That keeps response serialization from making many
+    # small database calls later.
     return (
         selectinload(Booking.client),
         selectinload(Booking.events).selectinload(BookingEvent.line_items),
@@ -26,13 +31,19 @@ def booking_options():
 
 
 def normalized_event_name(name: str) -> str:
+    """Normalize event names for duplicate checks inside one booking."""
+
     return " ".join(name.split()).lower()
 
 
 def ensure_unique_event_names(event_payloads: list[BookingEventCreate]) -> None:
+    """Reject duplicate event names before creating a booking with events."""
+
     seen_event_names: set[str] = set()
     for event_payload in event_payloads:
         event_name = normalized_event_name(event_payload.name)
+        if not event_name:
+            raise HTTPException(status_code=400, detail="Event name is required")
         if event_name in seen_event_names:
             raise HTTPException(status_code=409, detail="Event already exists for this booking")
         seen_event_names.add(event_name)
@@ -40,12 +51,16 @@ def ensure_unique_event_names(event_payloads: list[BookingEventCreate]) -> None:
 
 @router.get("", response_model=list[BookingRead])
 def list_bookings(db: Session = Depends(get_db)) -> list[Booking]:
+    """Return every booking with nested client, events, line items, and payments."""
+
     statement = select(Booking).options(*booking_options()).order_by(Booking.created_at.desc())
     return list(db.scalars(statement))
 
 
 @router.get("/{booking_id}", response_model=BookingRead)
 def get_booking(booking_id: int, db: Session = Depends(get_db)) -> Booking:
+    """Return one booking by id, including all nested billing details."""
+
     booking = db.scalar(select(Booking).where(Booking.id == booking_id).options(*booking_options()))
     if booking is None:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -54,6 +69,12 @@ def get_booking(booking_id: int, db: Session = Depends(get_db)) -> Booking:
 
 @router.post("", response_model=BookingRead, status_code=201)
 def create_booking(payload: BookingCreate, db: Session = Depends(get_db)) -> Booking:
+    """Create a booking for an existing client, optionally with events."""
+
+    if not payload.title.strip():
+        raise HTTPException(status_code=400, detail="Booking name is required")
+
+    # The frontend creates a client first, then calls this route with client_id.
     client = db.get(Client, payload.client_id)
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -61,6 +82,7 @@ def create_booking(payload: BookingCreate, db: Session = Depends(get_db)) -> Boo
     event_payloads = payload.events
     ensure_unique_event_names(event_payloads)
 
+    # Build the parent Booking row from request fields, then attach child events.
     booking = Booking(**payload.model_dump(exclude={"events"}))
     for event_payload in event_payloads:
         booking.events.append(_build_event(event_payload))
@@ -68,6 +90,7 @@ def create_booking(payload: BookingCreate, db: Session = Depends(get_db)) -> Boo
     db.add(booking)
     db.commit()
     db.refresh(booking)
+    # Re-read with booking_options() so the API response contains nested objects.
     return get_booking(booking.id, db)
 
 
@@ -77,11 +100,17 @@ def add_booking_event(
     payload: BookingEventCreate,
     db: Session = Depends(get_db),
 ) -> Booking:
+    """Attach one new event to an existing booking."""
+
     booking = db.get(Booking, booking_id)
     if booking is None:
         raise HTTPException(status_code=404, detail="Booking not found")
 
+    # Booking events are unique by normalized name inside the same booking.
     new_event_name = normalized_event_name(payload.name)
+    if not new_event_name:
+        raise HTTPException(status_code=400, detail="Event name is required")
+
     duplicate_event = any(
         normalized_event_name(existing_event.name) == new_event_name for existing_event in booking.events
     )
@@ -95,20 +124,26 @@ def add_booking_event(
 
 @router.delete("/{booking_id}", status_code=204)
 def delete_booking(booking_id: int, db: Session = Depends(get_db)) -> None:
+    """Delete a booking and its child events, line items, and payments."""
+
     booking = db.get(Booking, booking_id)
     if booking is None:
         raise HTTPException(status_code=404, detail="Booking not found")
 
+    # Cascade rules on the model remove related child records with the booking.
     db.delete(booking)
     db.commit()
 
 
 @router.delete("/events/{event_id}", response_model=BookingRead)
 def delete_booking_event(event_id: int, db: Session = Depends(get_db)) -> Booking:
+    """Delete one event and return the updated parent booking."""
+
     event = db.get(BookingEvent, event_id)
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
 
+    # Store the parent id before deletion so we can reload the booking afterward.
     booking_id = event.booking_id
     db.delete(event)
     db.commit()
@@ -121,10 +156,20 @@ def add_event_line_item(
     payload: EventLineItemCreate,
     db: Session = Depends(get_db),
 ) -> Booking:
+    """Add one material/rate/quantity row to an event and return the booking."""
+
     event = db.get(BookingEvent, event_id)
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
 
+    if not payload.material_name.strip():
+        raise HTTPException(status_code=400, detail="Material name is required")
+    if payload.quantity <= 0:
+        raise HTTPException(status_code=400, detail="Quantity must be greater than 0")
+    if payload.rate < 0:
+        raise HTTPException(status_code=400, detail="Rate cannot be negative")
+
+    # The EventLineItem belongs to the event through the relationship list.
     event.line_items.append(EventLineItem(**payload.model_dump()))
     db.commit()
     return get_booking(event.booking_id, db)
@@ -136,10 +181,17 @@ def add_payment(
     payload: PaymentCreate,
     db: Session = Depends(get_db),
 ) -> Payment:
+    """Record an advance/final payment against a booking."""
+
     booking = db.get(Booking, booking_id)
     if booking is None:
         raise HTTPException(status_code=404, detail="Booking not found")
 
+    if payload.amount <= 0:
+        raise HTTPException(status_code=400, detail="Payment amount must be greater than 0")
+
+    # Payment has its own endpoint because it is an independent transaction
+    # against the booking balance.
     payment = Payment(booking_id=booking_id, **payload.model_dump())
     db.add(payment)
     db.commit()
@@ -148,6 +200,8 @@ def add_payment(
 
 
 def _build_event(payload: BookingEventCreate) -> BookingEvent:
+    """Convert a nested event request into SQLAlchemy event and line-item rows."""
+
     line_payloads = payload.line_items
     event = BookingEvent(**payload.model_dump(exclude={"line_items"}))
     for line_payload in line_payloads:

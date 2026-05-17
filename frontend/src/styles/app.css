@@ -1,4 +1,5 @@
 :root {
+  /* Shared theme tokens used throughout the layout. */
   color-scheme: light;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --ink: #142033;
@@ -12,6 +13,7 @@
   --success: #1d8b62;
 }
 
+/* Global box sizing and base document styles. */
 * {
   box-sizing: border-box;
 }
@@ -37,12 +39,14 @@ button:disabled {
   opacity: 0.6;
 }
 
+/* Main two-column app frame: sidebar navigation plus content area. */
 .app-shell {
   display: grid;
   grid-template-columns: 260px 1fr;
   min-height: 100vh;
 }
 
+/* Sidebar branding and page navigation. */
 .sidebar {
   background: #0f1b2d;
   color: #fff;
@@ -105,6 +109,7 @@ button:disabled {
   color: #fff;
 }
 
+/* Main content header with title, API status, search, and primary action. */
 .main-area {
   padding: 26px;
   overflow-x: hidden;
@@ -153,6 +158,7 @@ h3 {
   font-size: 17px;
 }
 
+/* Shared button and search input styling. */
 .top-actions {
   align-items: center;
   display: flex;
@@ -201,7 +207,6 @@ h3 {
 }
 
 .ghost-button.compact {
-  margin-left: auto;
   padding: 6px 10px;
 }
 
@@ -213,6 +218,7 @@ h3 {
   width: 36px;
 }
 
+/* Reusable content layout helpers for dashboard and cards. */
 .page-grid {
   display: grid;
   gap: 20px;
@@ -224,6 +230,7 @@ h3 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+/* Dashboard metric cards and generic white panels. */
 .metric-card,
 .surface {
   background: var(--panel);
@@ -254,6 +261,7 @@ h3 {
   padding: 18px;
 }
 
+/* Section headers used in lists, details, and event panels. */
 .section-heading,
 .detail-header,
 .event-panel-head {
@@ -263,6 +271,7 @@ h3 {
   gap: 16px;
 }
 
+/* Dashboard upcoming-event list. */
 .event-list {
   display: grid;
   gap: 10px;
@@ -292,6 +301,7 @@ h3 {
   font-size: 13px;
 }
 
+/* Booking master/detail layout. */
 .split-layout {
   display: grid;
   gap: 18px;
@@ -304,6 +314,7 @@ h3 {
   gap: 12px;
 }
 
+/* Clickable booking cards in the left-side list. */
 .booking-card {
   background: #fff;
   border: 1px solid var(--line);
@@ -325,6 +336,28 @@ h3 {
   font-size: 13px;
 }
 
+.empty-panel {
+  align-content: center;
+  color: var(--muted);
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+  min-height: 260px;
+}
+
+.empty-panel h2,
+.empty-panel strong {
+  color: var(--ink);
+}
+
+.compact-empty {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  min-height: 140px;
+  padding: 14px;
+}
+
+/* Booking detail totals, summary strip, and event builder table. */
 .detail-pane {
   display: grid;
   gap: 18px;
@@ -352,8 +385,13 @@ h3 {
   border: 1px solid var(--line);
   border-radius: 8px;
   display: flex;
+  flex-wrap: wrap;
   gap: 22px;
   padding: 12px;
+}
+
+.summary-strip .ghost-button:first-of-type {
+  margin-left: auto;
 }
 
 .event-builder {
@@ -372,6 +410,7 @@ h3 {
   padding: 14px;
 }
 
+/* Shared table styling for booking detail, items, and invoice tables. */
 table {
   border-collapse: collapse;
   width: 100%;
@@ -406,6 +445,7 @@ th {
   padding: 4px 9px;
 }
 
+/* Invoice preview and print-ready bill layout. */
 .invoice-stage {
   overflow: auto;
   padding: 4px 0 30px;
@@ -436,6 +476,7 @@ th {
   width: min(100%, 980px);
 }
 
+/* Invoice header, customer info, event sections, and totals. */
 .bill-header {
   align-items: center;
   border-bottom: 3px solid var(--brand);
@@ -637,6 +678,7 @@ th {
   padding: 14px 16px;
 }
 
+/* Company settings and modal form controls. */
 .settings-panel {
   max-width: 840px;
 }
@@ -664,6 +706,7 @@ th {
   padding: 10px 12px;
 }
 
+/* Modal overlay and dialog shell shared by all create forms. */
 .modal-backdrop {
   align-items: center;
   background: rgba(15, 27, 45, 0.45);
@@ -709,8 +752,17 @@ th {
 }
 
 .modal-form label:first-child,
+.payment-balance-note,
 .modal-actions {
   grid-column: 1 / -1;
+}
+
+.payment-balance-note {
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 10px 12px;
 }
 
 .modal-actions {
@@ -720,6 +772,7 @@ th {
   padding-top: 4px;
 }
 
+/* Responsive layout for tablet/mobile widths. */
 @media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -760,11 +813,16 @@ th {
     min-width: 760px;
   }
 
+  .summary-strip .ghost-button:first-of-type {
+    margin-left: 0;
+  }
+
   .modal-form {
     grid-template-columns: 1fr;
   }
 }
 
+/* Print rules hide application chrome and leave only the invoice page. */
 @media print {
   body {
     background: #fff;

@@ -7,8 +7,11 @@ from app.core.database import Base
 
 
 class EventType(Base):
+    """Reusable event name shown as a master list for booking events."""
+
     __tablename__ = "event_types"
 
+    # Unique name keeps event type suggestions clean and non-duplicated.
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(20), default="Active")

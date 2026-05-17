@@ -1,9 +1,11 @@
+// Local fallback bookings. The app shows these when the backend is not running,
+// and then replaces them with API data after refreshData() succeeds.
 export const bookings = [
   {
     id: "booking-1003",
     bookingNo: "1003",
     title: "Waghmare Wedding",
-    status: "Confirmed",
+    status: "Pending",
     startDate: "26 December 2024",
     endDate: "29 December 2024",
     client: {
@@ -60,7 +62,7 @@ export const bookings = [
     id: "booking-1004",
     bookingNo: "1004",
     title: "Patil Wedding",
-    status: "Draft",
+    status: "Pending",
     startDate: "15 January 2025",
     endDate: "17 January 2025",
     client: {
@@ -93,6 +95,7 @@ export const bookings = [
   }
 ];
 
+// Local fallback material master used by the Add Event Material modal offline.
 export const inventoryItems = [
   { id: "item-laser", name: "Laser", category: "FX Light", unit: "Piece", rate: 6500, status: "Active" },
   { id: "item-led-par", name: "LED Par", category: "LED Light", unit: "Piece", rate: 750, status: "Active" },
@@ -101,6 +104,7 @@ export const inventoryItems = [
   { id: "item-fx", name: "Other FX Lights", category: "FX Package", unit: "Package", rate: 8500, status: "Active" }
 ];
 
+// Local fallback payments used to calculate dashboard/invoice balances offline.
 export const payments = [
   { id: "pay-1", bookingId: "booking-1003", amount: 50000, mode: "UPI", date: "20 December 2024" },
   { id: "pay-2", bookingId: "booking-1004", amount: 10000, mode: "Cash", date: "02 January 2025" }

@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict
 
 
 class ItemBase(BaseModel):
+    """Shared material master fields for create and read APIs."""
+
     name: str
     category: str = "FX Light"
     unit: str = "Piece"
@@ -13,11 +15,16 @@ class ItemBase(BaseModel):
 
 
 class ItemCreate(ItemBase):
+    """Request body for adding a material master item."""
+
     pass
 
 
 class ItemRead(ItemBase):
+    """Response body for material master items."""
+
     id: int
     created_at: datetime
 
+    # Allows the API to return SQLAlchemy Item objects as JSON.
     model_config = ConfigDict(from_attributes=True)

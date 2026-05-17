@@ -6,6 +6,8 @@ import {
   Gauge,
   IndianRupee,
   LibraryBig,
+  Landmark,
+  ListChecks,
   Plus,
   ReceiptText,
   Search,
@@ -17,16 +19,20 @@ import {
 import { bookings as initialBookings, inventoryItems as initialItems, payments as initialPayments } from "./data/sampleData";
 import "./styles/app.css";
 
+// Backend API root. All apiRequest() calls append their endpoint path to this.
 const API_BASE_URL = "http://127.0.0.1:8000/api";
 
+// Sidebar/page configuration. Each item maps a page id to a label and icon.
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: Gauge },
   { id: "bookings", label: "Bookings", icon: CalendarDays },
   { id: "invoice", label: "Invoice Preview", icon: ReceiptText },
+  { id: "events", label: "Events", icon: ListChecks },
   { id: "items", label: "Material Master", icon: LibraryBig },
   { id: "settings", label: "Settings", icon: Settings }
 ];
 
+// Format rupee values consistently across dashboard, booking detail, and invoice.
 function formatCurrency(value) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -35,6 +41,7 @@ function formatCurrency(value) {
   }).format(value);
 }
 
+// Convert backend YYYY-MM-DD dates into readable Indian display dates.
 function formatDate(value) {
   if (!value) return "";
   const date = new Date(`${value}T00:00:00`);
@@ -46,11 +53,37 @@ function formatDate(value) {
   }).format(date);
 }
 
+// Generate the next booking number from the current frontend list.
 function nextBookingNo(bookings) {
   const maxBookingNo = Math.max(1000, ...bookings.map((booking) => Number(booking.bookingNo) || 1000));
   return String(maxBookingNo + 1);
 }
 
+// Date input fields need YYYY-MM-DD, while display dates use formatDate().
+function todayInputDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+// Treat spaces-only input as empty before saving.
+function isBlank(value) {
+  return !String(value ?? "").trim();
+}
+
+function showRequiredMessage(fieldName) {
+  alert(`Please add ${fieldName}.`);
+}
+
+function showSaveError(action, error) {
+  alert(`${action}: ${error.message}`);
+}
+
+function normalizeName(value) {
+  const cleanValue = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (!cleanValue) return cleanValue;
+  return cleanValue[0].toUpperCase() + cleanValue.slice(1);
+}
+
+// Convert backend item fields from snake_case/API names into frontend names.
 function mapItemFromApi(item) {
   return {
     id: item.id,
@@ -62,6 +95,16 @@ function mapItemFromApi(item) {
   };
 }
 
+// Convert backend event type/master rows into the Events page shape.
+function mapEventTypeFromApi(eventType) {
+  return {
+    id: eventType.id,
+    name: eventType.name,
+    status: eventType.status
+  };
+}
+
+// Convert the nested BookingRead API response into the UI shape used below.
 function mapBookingFromApi(booking) {
   return {
     id: booking.id,
@@ -98,6 +141,7 @@ function mapBookingFromApi(booking) {
   };
 }
 
+// Shared fetch wrapper. Components call this instead of using fetch directly.
 async function apiRequest(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
@@ -108,14 +152,36 @@ async function apiRequest(path, options = {}) {
   });
 
   if (!response.ok) {
+    // Bubble backend validation/conflict details up to the calling handler.
     const message = await response.text();
-    throw new Error(message || `API request failed: ${response.status}`);
+    let detail = message;
+    try {
+      const parsedMessage = JSON.parse(message);
+      detail = parsedMessage.detail ?? message;
+    } catch (error) {
+      detail = message;
+    }
+    throw new Error(detail || `API request failed: ${response.status}`);
   }
 
   return response.json();
 }
 
+// Convert a balance amount into the payment status text shown as "Status".
+function paymentStatusFromBalance(balance) {
+  return balance > 0 ? "Pending" : "Done";
+}
+
+// Calculate subtotal, paid amount, and balance from booking events/payments.
 function bookingTotals(booking, paymentList = initialPayments) {
+  if (!booking) {
+    return {
+      subtotal: 0,
+      paid: 0,
+      balance: 0
+    };
+  }
+
   const subtotal = booking.events.reduce(
     (sum, event) =>
       sum +
@@ -134,34 +200,46 @@ function bookingTotals(booking, paymentList = initialPayments) {
 }
 
 function App() {
+  // activePage controls which screen is rendered inside the main content area.
   const [activePage, setActivePage] = useState("dashboard");
+  // These lists start with local sample data, then refresh from the backend.
   const [bookingList, setBookingList] = useState(initialBookings);
   const [itemList, setItemList] = useState(initialItems);
   const [paymentList, setPaymentList] = useState(initialPayments);
+  const [eventTypeList, setEventTypeList] = useState([]);
+  // selectedBookingId drives the booking detail and invoice preview screens.
   const [selectedBookingId, setSelectedBookingId] = useState(initialBookings[0].id);
+  // modal stores which dialog is open and any context it needs, such as eventId.
   const [modal, setModal] = useState(null);
   const [apiStatus, setApiStatus] = useState("Connecting to backend...");
   const [isSaving, setIsSaving] = useState(false);
+  // Memoized so the selected booking is recomputed only when the list/id changes.
   const selectedBooking = useMemo(
-    () => bookingList.find((booking) => booking.id === selectedBookingId) ?? bookingList[0],
+    () => bookingList.find((booking) => booking.id === selectedBookingId) ?? bookingList[0] ?? null,
     [bookingList, selectedBookingId]
   );
 
   useEffect(() => {
+    // On first load, replace sample data with real database data if available.
     refreshData();
   }, []);
 
   async function refreshData(preferredBookingId = selectedBookingId) {
     try {
-      const [apiBookings, apiItems] = await Promise.all([
+      // Bookings and material master are independent, so load them in parallel.
+      const [apiBookings, apiItems, apiEventTypes] = await Promise.all([
         apiRequest("/bookings"),
-        apiRequest("/items")
+        apiRequest("/items"),
+        apiRequest("/event-types")
       ]);
       const mappedBookings = apiBookings.map(mapBookingFromApi);
+      // Payments are nested under bookings in the API, but the UI keeps a flat
+      // payment list so bookingTotals() can reuse it everywhere.
       const mappedPayments = mappedBookings.flatMap((booking) => booking.payments);
 
       setBookingList(mappedBookings);
       setItemList(apiItems.map(mapItemFromApi));
+      setEventTypeList(apiEventTypes.map(mapEventTypeFromApi));
       setPaymentList(mappedPayments);
       setSelectedBookingId(
         mappedBookings.some((booking) => booking.id === preferredBookingId)
@@ -170,53 +248,85 @@ function App() {
       );
       setApiStatus("Connected to MySQL");
     } catch (error) {
+      // If the backend is not running, keep the app usable with sample data.
       setApiStatus("Backend offline, showing local sample data");
+      setEventTypeList([]);
     }
   }
 
   async function addBooking(payload) {
+    if (isBlank(payload.title)) {
+      showRequiredMessage("booking name");
+      return;
+    }
+    if (isBlank(payload.clientName)) {
+      showRequiredMessage("client name");
+      return;
+    }
+    if (isBlank(payload.mobile)) {
+      showRequiredMessage("mobile number");
+      return;
+    }
+
     setIsSaving(true);
     try {
+      // Booking creation is two API calls: first create the client, then use the
+      // returned client.id to create the booking record.
       const client = await apiRequest("/clients", {
         method: "POST",
         body: JSON.stringify({
-          name: payload.clientName,
-          mobile: payload.mobile,
-          address: payload.address || null
+          name: payload.clientName.trim(),
+          mobile: payload.mobile.trim(),
+          address: isBlank(payload.address) ? null : payload.address.trim()
         })
       });
       const booking = await apiRequest("/bookings", {
         method: "POST",
         body: JSON.stringify({
           booking_no: nextBookingNo(bookingList),
-          title: payload.title,
+          title: payload.title.trim(),
           client_id: client.id,
           start_date: payload.startDate || null,
           end_date: payload.endDate || null,
-          status: "Draft",
+          status: "Pending",
           events: []
         })
       });
 
       setModal(null);
       setActivePage("bookings");
+      // Refresh after save so generated ids and DB-calculated fields are used.
       await refreshData(booking.id);
     } catch (error) {
-      alert("Could not save booking. Please make sure backend is running.");
+      showSaveError("Could not save booking", error);
     } finally {
       setIsSaving(false);
     }
   }
 
   async function addMaterial(payload) {
+    if (isBlank(payload.name)) {
+      showRequiredMessage("material name");
+      return;
+    }
+    if (isBlank(payload.category)) {
+      showRequiredMessage("category");
+      return;
+    }
+    if (isBlank(payload.unit)) {
+      showRequiredMessage("unit");
+      return;
+    }
+
     setIsSaving(true);
     try {
+      // Add to material master; future line-item modals use this item list.
       await apiRequest("/items", {
         method: "POST",
         body: JSON.stringify({
-          name: payload.name,
-          category: payload.category,
-          unit: payload.unit,
+          name: payload.name.trim(),
+          category: payload.category.trim(),
+          unit: payload.unit.trim(),
           default_rate: Number(payload.rate) || 0,
           status: "Active"
         })
@@ -226,21 +336,86 @@ function App() {
       setActivePage("items");
       await refreshData();
     } catch (error) {
-      alert("Could not save material. Check if the material already exists and backend is running.");
+      showSaveError("Could not save material", error);
     } finally {
       setIsSaving(false);
     }
   }
 
-  async function addEvent(payload) {
+  async function addEventType(payload) {
+    if (isBlank(payload.name)) {
+      showRequiredMessage("event name");
+      return;
+    }
+
     setIsSaving(true);
     try {
+      await apiRequest("/event-types", {
+        method: "POST",
+        body: JSON.stringify({
+          name: normalizeName(payload.name),
+          status: "Active"
+        })
+      });
+
+      setModal(null);
+      setActivePage("events");
+      await refreshData();
+    } catch (error) {
+      showSaveError("Could not save event", error);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function ensureEventType(name) {
+    const normalizedName = normalizeName(name);
+    if (!normalizedName) return normalizedName;
+
+    const existingEventType = eventTypeList.find(
+      (eventType) => eventType.name.toLowerCase() === normalizedName.toLowerCase()
+    );
+    if (existingEventType) return existingEventType.name;
+
+    const eventType = await apiRequest("/event-types", {
+      method: "POST",
+      body: JSON.stringify({
+        name: normalizedName,
+        status: "Active"
+      })
+    });
+    return eventType.name;
+  }
+
+  async function addEvent(payload) {
+    if (!selectedBookingId) {
+      alert("Please create a booking before adding an event.");
+      return;
+    }
+    if (isBlank(payload.name)) {
+      showRequiredMessage("event name");
+      return;
+    }
+    const normalizedEventName = normalizeName(payload.name);
+    const duplicateEvent = selectedBooking?.events.some(
+      (event) => event.name.trim().toLowerCase() === normalizedEventName.toLowerCase()
+    );
+    if (duplicateEvent) {
+      alert("This event is already added to the selected booking.");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const eventName = await ensureEventType(normalizedEventName);
+      // Events are children of the currently selected booking.
       await apiRequest(`/bookings/${selectedBookingId}/events`, {
         method: "POST",
         body: JSON.stringify({
-          name: payload.name,
+          name: eventName,
           event_date: payload.date || null,
-          venue: payload.venue || null,
+          venue: isBlank(payload.venue) ? null : payload.venue.trim(),
+          status: "Pending",
           line_items: []
         })
       });
@@ -248,19 +423,33 @@ function App() {
       setModal(null);
       await refreshData(selectedBookingId);
     } catch (error) {
-      alert("Could not save event. Please make sure backend is running.");
+      showSaveError("Could not save event", error);
     } finally {
       setIsSaving(false);
     }
   }
 
   async function addLineItem(eventId, payload) {
+    if (isBlank(payload.material)) {
+      showRequiredMessage("material");
+      return;
+    }
+    if (Number(payload.quantity) <= 0) {
+      alert("Please add quantity greater than 0.");
+      return;
+    }
+    if (Number(payload.rate) < 0 || isBlank(payload.rate)) {
+      alert("Please add valid rate.");
+      return;
+    }
+
     setIsSaving(true);
     try {
+      // Line items are children of events, so the endpoint is event-based.
       await apiRequest(`/bookings/events/${eventId}/line-items`, {
         method: "POST",
         body: JSON.stringify({
-          material_name: payload.material,
+          material_name: payload.material.trim(),
           quantity: Number(payload.quantity) || 1,
           rate: Number(payload.rate) || 0
         })
@@ -269,7 +458,51 @@ function App() {
       setModal(null);
       await refreshData(selectedBookingId);
     } catch (error) {
-      alert("Could not save event material. Please make sure backend is running.");
+      showSaveError("Could not save event material", error);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function addPayment(payload) {
+    if (!selectedBooking) {
+      alert("Please create a booking before adding a payment.");
+      return;
+    }
+
+    const currentBalance = bookingTotals(selectedBooking, paymentList).balance;
+    const amount = Number(payload.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      alert("Please add payment amount greater than 0.");
+      return;
+    }
+    if (currentBalance <= 0) {
+      alert("Payment is already done for this booking.");
+      return;
+    }
+    if (amount > currentBalance) {
+      alert("Payment amount cannot be greater than current balance.");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      // Payments are attached to the selected booking and immediately affect
+      // the visible Status, Balance, and invoice totals after refresh.
+      await apiRequest(`/bookings/${selectedBookingId}/payments`, {
+        method: "POST",
+        body: JSON.stringify({
+          amount,
+          payment_date: payload.date || null,
+          mode: payload.mode,
+          notes: payload.type
+        })
+      });
+
+      setModal(null);
+      await refreshData(selectedBookingId);
+    } catch (error) {
+      showSaveError("Could not save payment", error);
     } finally {
       setIsSaving(false);
     }
@@ -323,6 +556,7 @@ function App() {
           </div>
         </header>
 
+        {/* Page switches keep each major screen in its own component. */}
         {activePage === "dashboard" && <Dashboard bookings={bookingList} items={itemList} payments={paymentList} />}
         {activePage === "bookings" && (
           <BookingsPage
@@ -334,10 +568,14 @@ function App() {
             onAddBooking={() => setModal({ type: "booking" })}
             onAddEvent={() => setModal({ type: "event" })}
             onAddLineItem={(eventId) => setModal({ type: "line", eventId })}
+            onAddPayment={() => setModal({ type: "payment" })}
             onOpenInvoice={() => setActivePage("invoice")}
           />
         )}
         {activePage === "invoice" && <InvoicePreview booking={selectedBooking} payments={paymentList} />}
+        {activePage === "events" && (
+          <EventTypesPage eventTypes={eventTypeList} onAddEventType={() => setModal({ type: "eventType" })} />
+        )}
         {activePage === "items" && <ItemsPage items={itemList} onAddMaterial={() => setModal({ type: "material" })} />}
         {activePage === "settings" && <SettingsPage />}
       </main>
@@ -348,8 +586,16 @@ function App() {
       {modal?.type === "material" && (
         <MaterialModal isSaving={isSaving} onClose={() => setModal(null)} onSubmit={addMaterial} />
       )}
+      {modal?.type === "eventType" && (
+        <EventTypeModal isSaving={isSaving} onClose={() => setModal(null)} onSubmit={addEventType} />
+      )}
       {modal?.type === "event" && (
-        <EventModal isSaving={isSaving} onClose={() => setModal(null)} onSubmit={addEvent} />
+        <EventModal
+          eventTypes={eventTypeList}
+          isSaving={isSaving}
+          onClose={() => setModal(null)}
+          onSubmit={addEvent}
+        />
       )}
       {modal?.type === "line" && (
         <LineItemModal
@@ -359,15 +605,25 @@ function App() {
           onSubmit={(payload) => addLineItem(modal.eventId, payload)}
         />
       )}
+      {modal?.type === "payment" && (
+        <PaymentModal
+          balance={bookingTotals(selectedBooking, paymentList).balance}
+          isSaving={isSaving}
+          onClose={() => setModal(null)}
+          onSubmit={addPayment}
+        />
+      )}
     </div>
   );
 }
 
 function pageTitle(page) {
+  // Translate internal page ids into user-facing headings.
   const titles = {
     dashboard: "Dashboard",
     bookings: "Wedding Bookings",
     invoice: "Final Bill Preview",
+    events: "Events",
     items: "Material Master",
     settings: "Settings"
   };
@@ -375,6 +631,7 @@ function pageTitle(page) {
 }
 
 function Dashboard({ bookings, items, payments }) {
+  // Dashboard metrics are derived from the same bookingTotals helper as invoices.
   const totalRevenue = bookings.reduce((sum, booking) => sum + bookingTotals(booking, payments).subtotal, 0);
   const totalBalance = bookings.reduce((sum, booking) => sum + bookingTotals(booking, payments).balance, 0);
   const upcomingEvents = bookings.flatMap((booking) =>
@@ -414,6 +671,7 @@ function Dashboard({ bookings, items, payments }) {
 }
 
 function MetricCard({ icon: Icon, label, value }) {
+  // Icon is passed as a React component from lucide-react.
   return (
     <article className="metric-card">
       <Icon size={22} />
@@ -432,8 +690,10 @@ function BookingsPage({
   onAddBooking,
   onAddEvent,
   onAddLineItem,
+  onAddPayment,
   onOpenInvoice
 }) {
+  // Left side selects a booking; right side renders the selected booking details.
   return (
     <section className="split-layout">
       <aside className="surface booking-list">
@@ -445,6 +705,7 @@ function BookingsPage({
         </div>
         {bookings.map((booking) => {
           const totals = bookingTotals(booking, payments);
+          const paymentStatus = paymentStatusFromBalance(totals.balance);
           return (
             <button
               className={booking.id === selectedBookingId ? "booking-card selected" : "booking-card"}
@@ -455,25 +716,51 @@ function BookingsPage({
               <strong>{booking.title}</strong>
               <span>{booking.client.name} · {booking.client.mobile}</span>
               <small>{booking.startDate} to {booking.endDate}</small>
-              <b>{formatCurrency(totals.balance)} pending</b>
+              <b>{paymentStatus}: {formatCurrency(totals.balance)} balance</b>
             </button>
           );
         })}
+        {bookings.length === 0 && (
+          <div className="empty-panel compact-empty">
+            <strong>No bookings yet.</strong>
+            <span>Create the first booking to add events, materials, and payments.</span>
+          </div>
+        )}
       </aside>
 
-      <BookingDetail
-        booking={selectedBooking}
-        onAddEvent={onAddEvent}
-        onAddLineItem={onAddLineItem}
-        onOpenInvoice={onOpenInvoice}
-        payments={payments}
-      />
+      {selectedBooking ? (
+        <BookingDetail
+          booking={selectedBooking}
+          onAddEvent={onAddEvent}
+          onAddLineItem={onAddLineItem}
+          onAddPayment={onAddPayment}
+          onOpenInvoice={onOpenInvoice}
+          payments={payments}
+        />
+      ) : (
+        <EmptyBookingState onAddBooking={onAddBooking} />
+      )}
     </section>
   );
 }
 
-function BookingDetail({ booking, payments, onAddEvent, onAddLineItem, onOpenInvoice }) {
+function EmptyBookingState({ onAddBooking }) {
+  return (
+    <section className="surface empty-panel">
+      <h2>No booking selected</h2>
+      <p>Create a booking first. After that you can add events, materials, payments, and print the final bill.</p>
+      <button className="primary-action" onClick={onAddBooking} type="button">
+        <Plus size={18} />
+        New Booking
+      </button>
+    </section>
+  );
+}
+
+function BookingDetail({ booking, payments, onAddEvent, onAddLineItem, onAddPayment, onOpenInvoice }) {
+  // Totals are recalculated whenever selected booking or payment props change.
   const totals = bookingTotals(booking, payments);
+  const paymentStatus = paymentStatusFromBalance(totals.balance);
 
   return (
     <section className="surface detail-pane">
@@ -496,7 +783,11 @@ function BookingDetail({ booking, payments, onAddEvent, onAddLineItem, onOpenInv
       <div className="summary-strip">
         <span>Advance: <strong>{formatCurrency(totals.paid)}</strong></span>
         <span>Balance: <strong>{formatCurrency(totals.balance)}</strong></span>
-        <span>Status: <strong>{booking.status}</strong></span>
+        <span>Status: <strong>{paymentStatus}</strong></span>
+        <button className="ghost-button compact" onClick={onAddPayment} type="button">
+          <Landmark size={16} />
+          Add Payment
+        </button>
         <button className="ghost-button compact" onClick={onAddEvent} type="button">
           <Plus size={16} />
           Add Event
@@ -546,8 +837,19 @@ function BookingDetail({ booking, payments, onAddEvent, onAddLineItem, onOpenInv
 }
 
 function InvoicePreview({ booking, payments }) {
+  if (!booking) {
+    return (
+      <section className="surface empty-panel">
+        <h2>No invoice available</h2>
+        <p>Create a booking before opening the invoice preview.</p>
+      </section>
+    );
+  }
+
+  // Invoice uses the same selected booking but formats it as a print-ready page.
   const totals = bookingTotals(booking, payments);
   const bookingPayments = payments.filter((payment) => payment.bookingId === booking.id);
+  const paymentStatus = paymentStatusFromBalance(totals.balance);
 
   return (
     <section className="invoice-stage">
@@ -589,7 +891,7 @@ function InvoicePreview({ booking, payments }) {
           <div>
             <span className="bill-label">Amount Due</span>
             <strong className="bill-due">{formatCurrency(totals.balance)}</strong>
-            <p>Status: {booking.status}</p>
+            <p>Status: {paymentStatus}</p>
           </div>
         </section>
 
@@ -674,6 +976,7 @@ function InvoicePreview({ booking, payments }) {
 }
 
 function ItemsPage({ items, onAddMaterial }) {
+  // Material master table feeds the Add Event Material dropdown.
   return (
     <section className="surface">
       <div className="section-heading">
@@ -709,7 +1012,42 @@ function ItemsPage({ items, onAddMaterial }) {
   );
 }
 
+function EventTypesPage({ eventTypes, onAddEventType }) {
+  return (
+    <section className="surface">
+      <div className="section-heading">
+        <h2>Events</h2>
+        <button className="primary-action" onClick={onAddEventType} type="button">
+          <Plus size={18} />
+          Add Event
+        </button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Event</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {eventTypes.length > 0 ? eventTypes.map((eventType) => (
+            <tr key={eventType.id}>
+              <td>{eventType.name}</td>
+              <td><span className="status-pill">{eventType.status}</span></td>
+            </tr>
+          )) : (
+            <tr>
+              <td colSpan="2" className="empty-cell">No events added yet.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 function Modal({ title, onClose, children }) {
+  // Generic wrapper used by all forms so modal structure and close button match.
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="modal-card" role="dialog" aria-modal="true" aria-label={title}>
@@ -726,6 +1064,7 @@ function Modal({ title, onClose, children }) {
 }
 
 function BookingModal({ isSaving, onClose, onSubmit }) {
+  // Local form state is submitted to App.addBooking(), which performs API calls.
   const [form, setForm] = useState({
     title: "",
     clientName: "",
@@ -757,6 +1096,7 @@ function BookingModal({ isSaving, onClose, onSubmit }) {
 }
 
 function MaterialModal({ isSaving, onClose, onSubmit }) {
+  // Material form creates a reusable rate/unit entry in the backend.
   const [form, setForm] = useState({ name: "", category: "FX Light", unit: "Piece", rate: "" });
 
   return (
@@ -778,16 +1118,50 @@ function MaterialModal({ isSaving, onClose, onSubmit }) {
   );
 }
 
-function EventModal({ isSaving, onClose, onSubmit }) {
+function EventTypeModal({ isSaving, onClose, onSubmit }) {
+  const [form, setForm] = useState({ name: "" });
+
+  return (
+    <Modal title="Add Event" onClose={onClose}>
+      <form className="modal-form" onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit({ name: normalizeName(form.name) });
+      }}>
+        <label>Event Name<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Sangeet" /></label>
+        <div className="modal-actions">
+          <button className="ghost-button" disabled={isSaving} onClick={onClose} type="button">Cancel</button>
+          <button className="primary-action" disabled={isSaving} type="submit">{isSaving ? "Saving..." : "Add Event"}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function EventModal({ eventTypes, isSaving, onClose, onSubmit }) {
+  // Event form attaches a new event to the selected booking.
   const [form, setForm] = useState({ name: "", date: "", venue: "" });
 
   return (
     <Modal title="Add Event" onClose={onClose}>
       <form className="modal-form" onSubmit={(event) => {
         event.preventDefault();
-        onSubmit(form);
+        onSubmit({ ...form, name: normalizeName(form.name) });
       }}>
-        <label>Event Name<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Sangeet, Haldi, Saptpadi" /></label>
+        <label>
+          Event Name
+          <input
+            list="event-type-options"
+            required
+            value={form.name}
+            onChange={(event) => setForm({ ...form, name: event.target.value })}
+            placeholder="Select or type event"
+          />
+          <datalist id="event-type-options">
+            {eventTypes.map((eventType) => (
+              <option key={eventType.id} value={eventType.name} />
+            ))}
+          </datalist>
+        </label>
         <label>Date<input type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} /></label>
         <label>Venue<input value={form.venue} onChange={(event) => setForm({ ...form, venue: event.target.value })} /></label>
         <div className="modal-actions">
@@ -800,6 +1174,7 @@ function EventModal({ isSaving, onClose, onSubmit }) {
 }
 
 function LineItemModal({ items, isSaving, onClose, onSubmit }) {
+  // Default to the first material so the user can quickly add common items.
   const firstItem = items[0] ?? { name: "", rate: 0 };
   const [form, setForm] = useState({
     material: firstItem.name,
@@ -808,6 +1183,7 @@ function LineItemModal({ items, isSaving, onClose, onSubmit }) {
   });
 
   function selectMaterial(name) {
+    // When material changes, copy its default rate into the editable rate field.
     const selectedItem = items.find((item) => item.name === name);
     setForm({
       ...form,
@@ -841,7 +1217,60 @@ function LineItemModal({ items, isSaving, onClose, onSubmit }) {
   );
 }
 
+function PaymentModal({ balance, isSaving, onClose, onSubmit }) {
+  // Payment form supports partial payments and final payment against the balance.
+  const safeBalance = Math.max(balance, 0);
+  const [form, setForm] = useState({
+    type: "Partial Payment",
+    amount: "",
+    mode: "Cash",
+    date: todayInputDate()
+  });
+
+  function selectPaymentType(type) {
+    setForm({
+      ...form,
+      type,
+      amount: type === "Final Payment" ? String(safeBalance) : form.amount
+    });
+  }
+
+  return (
+    <Modal title="Add Payment" onClose={onClose}>
+      <form className="modal-form" onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit(form);
+      }}>
+        <label>
+          Payment Type
+          <select value={form.type} onChange={(event) => selectPaymentType(event.target.value)}>
+            <option>Partial Payment</option>
+            <option>Final Payment</option>
+          </select>
+        </label>
+        <label>Amount<input max={safeBalance || undefined} min="1" required type="number" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} /></label>
+        <label>
+          Mode
+          <select value={form.mode} onChange={(event) => setForm({ ...form, mode: event.target.value })}>
+            <option>Cash</option>
+            <option>UPI</option>
+            <option>Bank Transfer</option>
+            <option>Cheque</option>
+          </select>
+        </label>
+        <label>Date<input type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} /></label>
+        <div className="payment-balance-note">Current balance: <strong>{formatCurrency(safeBalance)}</strong></div>
+        <div className="modal-actions">
+          <button className="ghost-button" disabled={isSaving} onClick={onClose} type="button">Cancel</button>
+          <button className="primary-action" disabled={isSaving || safeBalance <= 0} type="submit">{isSaving ? "Saving..." : "Save Payment"}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function SettingsPage() {
+  // Static settings form placeholder for future company/invoice configuration.
   return (
     <section className="surface settings-panel">
       <h2>Company Settings</h2>
@@ -855,4 +1284,5 @@ function SettingsPage() {
   );
 }
 
+// Mount the React application into frontend/index.html.
 createRoot(document.getElementById("root")).render(<App />);
