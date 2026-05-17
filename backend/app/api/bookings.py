@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, selectinload, with_loader_criteria
 
 from app.core.database import get_db
 from app.models.booking import Booking, BookingEvent, EventLineItem, Payment
@@ -27,6 +27,7 @@ def booking_options():
         selectinload(Booking.client),
         selectinload(Booking.events).selectinload(BookingEvent.line_items),
         selectinload(Booking.payments),
+        with_loader_criteria(BookingEvent, BookingEvent.is_active.is_(True)),
     )
 
 
@@ -53,7 +54,12 @@ def ensure_unique_event_names(event_payloads: list[BookingEventCreate]) -> None:
 def list_bookings(db: Session = Depends(get_db)) -> list[Booking]:
     """Return every booking with nested client, events, line items, and payments."""
 
-    statement = select(Booking).options(*booking_options()).order_by(Booking.created_at.desc())
+    statement = (
+        select(Booking)
+        .where(Booking.is_active.is_(True))
+        .options(*booking_options())
+        .order_by(Booking.created_at.desc())
+    )
     return list(db.scalars(statement))
 
 
@@ -61,8 +67,12 @@ def list_bookings(db: Session = Depends(get_db)) -> list[Booking]:
 def get_booking(booking_id: int, db: Session = Depends(get_db)) -> Booking:
     """Return one booking by id, including all nested billing details."""
 
-    booking = db.scalar(select(Booking).where(Booking.id == booking_id).options(*booking_options()))
-    if booking is None:
+    booking = db.scalar(
+        select(Booking)
+        .where(Booking.id == booking_id, Booking.is_active.is_(True))
+        .options(*booking_options())
+    )
+    if booking is None or not booking.is_active:
         raise HTTPException(status_code=404, detail="Booking not found")
     return booking
 
@@ -111,8 +121,14 @@ def add_booking_event(
     if not new_event_name:
         raise HTTPException(status_code=400, detail="Event name is required")
 
+    existing_events = db.scalars(
+        select(BookingEvent).where(
+            BookingEvent.booking_id == booking_id,
+            BookingEvent.is_active.is_(True),
+        )
+    )
     duplicate_event = any(
-        normalized_event_name(existing_event.name) == new_event_name for existing_event in booking.events
+        normalized_event_name(existing_event.name) == new_event_name for existing_event in existing_events
     )
     if duplicate_event:
         raise HTTPException(status_code=409, detail="Event already exists for this booking")
@@ -127,11 +143,11 @@ def delete_booking(booking_id: int, db: Session = Depends(get_db)) -> None:
     """Delete a booking and its child events, line items, and payments."""
 
     booking = db.get(Booking, booking_id)
-    if booking is None:
+    if booking is None or not booking.is_active:
         raise HTTPException(status_code=404, detail="Booking not found")
 
-    # Cascade rules on the model remove related child records with the booking.
-    db.delete(booking)
+    booking.is_active = False
+    booking.status = "Inactive"
     db.commit()
 
 
@@ -140,12 +156,13 @@ def delete_booking_event(event_id: int, db: Session = Depends(get_db)) -> Bookin
     """Delete one event and return the updated parent booking."""
 
     event = db.get(BookingEvent, event_id)
-    if event is None:
+    if event is None or not event.is_active:
         raise HTTPException(status_code=404, detail="Event not found")
 
     # Store the parent id before deletion so we can reload the booking afterward.
     booking_id = event.booking_id
-    db.delete(event)
+    event.is_active = False
+    event.status = "Inactive"
     db.commit()
     return get_booking(booking_id, db)
 
@@ -159,7 +176,7 @@ def add_event_line_item(
     """Add one material/rate/quantity row to an event and return the booking."""
 
     event = db.get(BookingEvent, event_id)
-    if event is None:
+    if event is None or not event.is_active:
         raise HTTPException(status_code=404, detail="Event not found")
 
     if not payload.material_name.strip():
@@ -184,7 +201,7 @@ def add_payment(
     """Record an advance/final payment against a booking."""
 
     booking = db.get(Booking, booking_id)
-    if booking is None:
+    if booking is None or not booking.is_active:
         raise HTTPException(status_code=404, detail="Booking not found")
 
     if payload.amount <= 0:

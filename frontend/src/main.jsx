@@ -13,6 +13,7 @@ import {
   Search,
   Settings,
   Sparkles,
+  Trash2,
   Users,
   X
 } from "lucide-react";
@@ -67,6 +68,10 @@ function todayInputDate() {
 // Treat spaces-only input as empty before saving.
 function isBlank(value) {
   return !String(value ?? "").trim();
+}
+
+function mobileDigits(value) {
+  return String(value ?? "").replace(/\D/g, "").slice(0, 10);
 }
 
 function showRequiredMessage(fieldName) {
@@ -162,6 +167,10 @@ async function apiRequest(path, options = {}) {
       detail = message;
     }
     throw new Error(detail || `API request failed: ${response.status}`);
+  }
+
+  if (response.status === 204) {
+    return null;
   }
 
   return response.json();
@@ -267,6 +276,10 @@ function App() {
       showRequiredMessage("mobile number");
       return;
     }
+    if (!/^\d{10}$/.test(payload.mobile)) {
+      alert("Mobile number must be exactly 10 digits.");
+      return;
+    }
 
     setIsSaving(true);
     try {
@@ -276,7 +289,7 @@ function App() {
         method: "POST",
         body: JSON.stringify({
           name: payload.clientName.trim(),
-          mobile: payload.mobile.trim(),
+          mobile: payload.mobile,
           address: isBlank(payload.address) ? null : payload.address.trim()
         })
       });
@@ -509,6 +522,38 @@ function App() {
     }
   }
 
+  async function deleteBooking(bookingId) {
+    const booking = bookingList.find((currentBooking) => currentBooking.id === bookingId);
+    if (!booking || !window.confirm(`Confirm delete booking "${booking.title}"?`)) return;
+
+    setIsSaving(true);
+    try {
+      await apiRequest(`/bookings/${bookingId}`, { method: "DELETE" });
+      setModal(null);
+      setActivePage("bookings");
+      await refreshData(null);
+    } catch (error) {
+      showSaveError("Could not mark booking inactive", error);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function deleteEvent(eventId) {
+    const event = selectedBooking?.events.find((currentEvent) => currentEvent.id === eventId);
+    if (!event || !window.confirm(`Confirm delete event "${event.name}"?`)) return;
+
+    setIsSaving(true);
+    try {
+      await apiRequest(`/bookings/events/${eventId}`, { method: "DELETE" });
+      await refreshData(selectedBookingId);
+    } catch (error) {
+      showSaveError("Could not mark event inactive", error);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -570,6 +615,9 @@ function App() {
             onAddEvent={() => setModal({ type: "event" })}
             onAddLineItem={(eventId) => setModal({ type: "line", eventId })}
             onAddPayment={() => setModal({ type: "payment" })}
+            onDeleteBooking={deleteBooking}
+            onDeleteEvent={deleteEvent}
+            isSaving={isSaving}
             onOpenInvoice={() => setActivePage("invoice")}
           />
         )}
@@ -692,6 +740,9 @@ function BookingsPage({
   onAddEvent,
   onAddLineItem,
   onAddPayment,
+  onDeleteBooking,
+  onDeleteEvent,
+  isSaving,
   onOpenInvoice
 }) {
   // Left side selects a booking; right side renders the selected booking details.
@@ -735,6 +786,9 @@ function BookingsPage({
           onAddEvent={onAddEvent}
           onAddLineItem={onAddLineItem}
           onAddPayment={onAddPayment}
+          onDeleteBooking={onDeleteBooking}
+          onDeleteEvent={onDeleteEvent}
+          isSaving={isSaving}
           onOpenInvoice={onOpenInvoice}
           payments={payments}
         />
@@ -758,7 +812,17 @@ function EmptyBookingState({ onAddBooking }) {
   );
 }
 
-function BookingDetail({ booking, payments, onAddEvent, onAddLineItem, onAddPayment, onOpenInvoice }) {
+function BookingDetail({
+  booking,
+  payments,
+  onAddEvent,
+  onAddLineItem,
+  onAddPayment,
+  onDeleteBooking,
+  onDeleteEvent,
+  isSaving,
+  onOpenInvoice
+}) {
   // Totals are recalculated whenever selected booking or payment props change.
   const totals = bookingTotals(booking, payments);
   const paymentStatus = paymentStatusFromBalance(totals.balance);
@@ -774,10 +838,21 @@ function BookingDetail({ booking, payments, onAddEvent, onAddLineItem, onAddPaym
         <div className="amount-stack">
           <span>Total</span>
           <strong>{formatCurrency(totals.subtotal)}</strong>
-          <button className="primary-action" onClick={onOpenInvoice} type="button">
-            <ReceiptText size={17} />
-            Print Final Bill
-          </button>
+          <div className="booking-actions">
+            <button className="primary-action" onClick={onOpenInvoice} type="button">
+              <ReceiptText size={17} />
+              Print Final Bill
+            </button>
+            <button
+              className="icon-button danger"
+              disabled={isSaving}
+              onClick={() => onDeleteBooking(booking.id)}
+              title="Delete booking"
+              type="button"
+            >
+              <Trash2 size={17} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -803,7 +878,18 @@ function BookingDetail({ booking, payments, onAddEvent, onAddLineItem, onAddPaym
                 <h3>{event.name}</h3>
                 <span>{event.date} · {event.venue}</span>
               </div>
-              <button className="ghost-button" onClick={() => onAddLineItem(event.id)} type="button">Add Material</button>
+              <div className="event-actions">
+                <button className="ghost-button" onClick={() => onAddLineItem(event.id)} type="button">Add Material</button>
+                <button
+                  className="icon-button danger"
+                  disabled={isSaving}
+                  onClick={() => onDeleteEvent(event.id)}
+                  title="Delete event"
+                  type="button"
+                >
+                  <Trash2 size={17} />
+                </button>
+              </div>
             </div>
             <table>
               <thead>
@@ -1083,7 +1169,17 @@ function BookingModal({ isSaving, onClose, onSubmit }) {
       }}>
         <label>Booking Name<input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="Patel Wedding" /></label>
         <label>Client Name<input required value={form.clientName} onChange={(event) => setForm({ ...form, clientName: event.target.value })} /></label>
-        <label>Mobile<input required value={form.mobile} onChange={(event) => setForm({ ...form, mobile: event.target.value })} /></label>
+        <label>
+          Mobile
+          <input
+            inputMode="numeric"
+            maxLength="10"
+            pattern="[0-9]{10}"
+            required
+            value={form.mobile}
+            onChange={(event) => setForm({ ...form, mobile: mobileDigits(event.target.value) })}
+          />
+        </label>
         <label>Address<input value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} /></label>
         <label>Start Date<input type="date" value={form.startDate} onChange={(event) => setForm({ ...form, startDate: event.target.value })} /></label>
         <label>End Date<input type="date" value={form.endDate} onChange={(event) => setForm({ ...form, endDate: event.target.value })} /></label>

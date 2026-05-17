@@ -11,10 +11,10 @@ class Client(Base):
 
     __tablename__ = "clients"
 
-    # name and mobile are indexed because they are natural search fields.
+    # Mobile is the unique natural key used to reuse existing clients.
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(120), index=True)
-    mobile: Mapped[str] = mapped_column(String(20), index=True)
+    mobile: Mapped[str] = mapped_column(String(10), unique=True, index=True)
     address: Mapped[str | None] = mapped_column(String(255), default=None)
     notes: Mapped[str | None] = mapped_column(String(500), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

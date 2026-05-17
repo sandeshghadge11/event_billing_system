@@ -218,6 +218,15 @@ h3 {
   width: 36px;
 }
 
+.icon-button.danger {
+  color: #b42318;
+}
+
+.icon-button.danger:hover {
+  background: #fff1f0;
+  border-color: #f0b8b2;
+}
+
 /* Reusable content layout helpers for dashboard and cards. */
 .page-grid {
   display: grid;
@@ -378,6 +387,13 @@ h3 {
 
 .amount-stack strong {
   font-size: 26px;
+}
+
+.booking-actions,
+.event-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
 }
 
 .summary-strip {
