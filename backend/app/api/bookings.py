@@ -317,113 +317,86 @@ def _booking_totals(booking: Booking) -> tuple[Decimal, Decimal, Decimal]:
 def _booking_bill_pdf(booking: Booking, company_settings: CompanySettings) -> bytes:
     subtotal, paid, balance = _booking_totals(booking)
     payment_status = "Pending" if balance > 0 else "Done"
-    commands: list[str] = []
+    pages: list[list[str]] = []
 
-    _rect(commands, 34, 34, 527, 774, fill="1 1 1", stroke="0.831 0.858 0.902")
-    _line(commands, 58, 730, 537, 730, color="0.059 0.353 0.643", width=2.4)
-    _rect(commands, 58, 742, 86, 50, fill="0.059 0.353 0.643")
-    _text(commands, company_settings.invoice_prefix[:8], 77, 761, size=18, font="F2", color="1 1 1")
-    _text(commands, "FINAL BILL", 160, 779, size=8, font="F2", color="0.392 0.455 0.545")
-    _text(commands, company_settings.company_name.upper(), 160, 754, size=22, font="F2")
-    _text(commands, "Laser, LED, Sharpee and FX lighting supplier", 160, 738, size=9, color="0.392 0.455 0.545")
-    _rect(commands, 400, 744, 137, 48, fill="0.969 0.980 0.988", stroke="0.827 0.859 0.902")
-    _text(commands, "INVOICE NO.", 418, 776, size=7, font="F2", color="0.392 0.455 0.545")
-    _text(commands, f"{company_settings.invoice_prefix}-{booking.booking_no}", 418, 760, size=13, font="F2")
-    _text(commands, _date_text(booking.start_date), 418, 748, size=8, color="0.392 0.455 0.545")
+    def new_page(*, first_page: bool = False) -> tuple[list[str], int]:
+        page_commands: list[str] = []
+        pages.append(page_commands)
+        _draw_page_frame(page_commands)
+        if first_page:
+            _draw_invoice_header(page_commands, booking, company_settings)
+            _info_box(page_commands, 58, 655, 145, "BILL TO", [booking.client.name, booking.client.mobile, booking.client.address or ""])
+            _info_box(
+                page_commands,
+                224,
+                655,
+                170,
+                "BOOKING",
+                [
+                    booking.title,
+                    f"{_date_text(booking.start_date)} to {_date_text(booking.end_date)}",
+                    f"{len(booking.events)} linked event entries",
+                ],
+            )
+            _info_box(page_commands, 418, 655, 119, "AMOUNT DUE", [_money(balance), f"Status: {payment_status}"], highlight=True)
+            return page_commands, 610
 
-    _info_box(commands, 58, 655, 145, "BILL TO", [booking.client.name, booking.client.mobile, booking.client.address or ""])
-    _info_box(
-        commands,
-        224,
-        655,
-        170,
-        "BOOKING",
-        [
-            booking.title,
-            f"{_date_text(booking.start_date)} to {_date_text(booking.end_date)}",
-            f"{len(booking.events)} linked event entries",
-        ],
-    )
-    _info_box(commands, 418, 655, 119, "AMOUNT DUE", [_money(balance), f"Status: {payment_status}"], highlight=True)
+        _text(page_commands, f"{company_settings.invoice_prefix}-{booking.booking_no}", 58, 780, size=10, font="F2", color="0.059 0.353 0.643")
+        _text(page_commands, booking.title, 537, 780, size=9, color="0.392 0.455 0.545", align="right")
+        _line(page_commands, 58, 764, 537, 764, color="0.831 0.858 0.902", width=0.8)
+        return page_commands, 742
 
-    y = 610
-    for index, event in enumerate(booking.events, start=1):
-        visible_lines = list(event.line_items)[:4]
-        row_count = max(len(visible_lines), 1)
-        event_height = 58 + (row_count * 16) + 18
-        if y - event_height < 190:
-            _text(commands, "More event details continue in the app preview.", 58, y, size=8, color="0.392 0.455 0.545")
-            break
+    commands, y = new_page(first_page=True)
+    event_bottom_limit = 52
+    for event in booking.events:
+        event_lines = list(event.line_items)
+        if not event_lines:
+            event_lines = [None]
 
         event_total = sum((line.quantity * line.rate for line in event.line_items), Decimal("0"))
-        _rect(commands, 58, y - event_height, 479, event_height, stroke="0.827 0.859 0.902")
-        _rect(commands, 58, y - 32, 479, 32, fill="0.961 0.973 0.988", stroke="0.827 0.859 0.902")
-        _text(commands, f"EVENT {index}", 74, y - 13, size=7, font="F2", color="0.392 0.455 0.545")
-        _text(commands, event.name, 74, y - 27, size=12, font="F2")
-        _text(commands, _date_text(event.event_date), 458, y - 13, size=8, font="F2", align="right")
-        _text(commands, event.venue or "", 458, y - 27, size=8, color="0.392 0.455 0.545", align="right")
+        line_index = 0
+        while line_index < len(event_lines):
+            row_capacity = max(int((y - event_bottom_limit - 84) // 18), 0)
+            if row_capacity < 1:
+                commands, y = new_page()
+                row_capacity = max(int((y - event_bottom_limit - 84) // 18), 1)
 
-        table_y = y - 48
-        _rect(commands, 58, table_y - 16, 479, 16, fill="0.059 0.353 0.643")
-        _text(commands, "Material", 72, table_y - 12, size=8, font="F2", color="1 1 1")
-        _text(commands, "Qty", 355, table_y - 12, size=8, font="F2", color="1 1 1", align="right")
-        _text(commands, "Rate", 440, table_y - 12, size=8, font="F2", color="1 1 1", align="right")
-        _text(commands, "Amount", 522, table_y - 12, size=8, font="F2", color="1 1 1", align="right")
+            chunk = event_lines[line_index : line_index + row_capacity]
+            is_first_chunk = line_index == 0
+            is_last_chunk = line_index + len(chunk) >= len(event_lines)
+            y = _draw_event_chunk(commands, y, event, chunk, event_total, is_first_chunk, is_last_chunk)
+            line_index += len(chunk)
 
-        row_y = table_y - 31
-        if visible_lines:
-            for line in visible_lines:
-                _text(commands, line.material_name, 72, row_y, size=8)
-                _text(commands, _quantity(line.quantity), 355, row_y, size=8, align="right")
-                _text(commands, _money(line.rate), 440, row_y, size=8, align="right")
-                _text(commands, _money(line.quantity * line.rate), 522, row_y, size=8, align="right")
-                _line(commands, 58, row_y - 6, 537, row_y - 6, color="0.925 0.941 0.961", width=0.6)
-                row_y -= 16
-        else:
-            _text(commands, "No material added yet.", 72, row_y, size=8, color="0.392 0.455 0.545")
-            row_y -= 16
+            if not is_last_chunk:
+                commands, y = new_page()
 
-        _rect(commands, 58, y - event_height, 479, 20, fill="0.976 0.984 0.992")
-        _text(commands, "Event Subtotal", 420, y - event_height + 7, size=8, font="F2", color="0.059 0.353 0.643", align="right")
-        _text(commands, _money(event_total), 522, y - event_height + 7, size=8, font="F2", color="0.059 0.353 0.643", align="right")
-        y -= event_height + 12
+    payment_entries: list[Payment | None] = list(booking.payments) or [None]
+    payment_index = 0
+    while payment_index < len(payment_entries):
+        remaining_payment_count = len(payment_entries) - payment_index
+        remaining_summary_height = max(98, 42 + (remaining_payment_count * 16))
+        if y - remaining_summary_height >= 48:
+            _draw_summary(commands, payment_entries[payment_index:], subtotal, paid, balance, y)
+            break
 
-    bottom_y = 78
-    _rect(commands, 58, bottom_y, 270, 98, stroke="0.827 0.859 0.902")
-    _text(commands, "Payments", 74, bottom_y + 76, size=12, font="F2")
-    payment_y = bottom_y + 58
-    if booking.payments:
-        for payment in list(booking.payments)[:4]:
-            _text(commands, _date_text(payment.payment_date), 74, payment_y, size=8, color="0.392 0.455 0.545")
-            _text(commands, payment.mode, 160, payment_y, size=8)
-            _text(commands, _money(payment.amount), 310, payment_y, size=8, font="F2", align="right")
-            payment_y -= 16
-    else:
-        _text(commands, "No advance payment recorded.", 74, payment_y, size=8, color="0.392 0.455 0.545")
+        if remaining_payment_count == 1:
+            commands, y = new_page()
+            continue
 
-    _rect(commands, 350, bottom_y, 187, 98, fill="0.067 0.094 0.153")
-    _text(commands, "Subtotal", 368, bottom_y + 70, size=9, color="0.796 0.835 0.882")
-    _text(commands, _money(subtotal), 518, bottom_y + 70, size=9, font="F2", color="1 1 1", align="right")
-    _text(commands, "Advance Paid", 368, bottom_y + 48, size=9, color="0.796 0.835 0.882")
-    _text(commands, _money(paid), 518, bottom_y + 48, size=9, font="F2", color="1 1 1", align="right")
-    _line(commands, 366, bottom_y + 32, 521, bottom_y + 32, color="0.247 0.290 0.357", width=0.8)
-    _text(commands, "Balance Due", 368, bottom_y + 16, size=11, color="0.796 0.835 0.882")
-    _text(commands, _money(balance), 518, bottom_y + 16, size=11, font="F2", color="1 1 1", align="right")
+        row_capacity = max(int((y - 48 - 42) // 16), 0)
+        if row_capacity < 1:
+            commands, y = new_page()
+            continue
 
-    _rect(commands, 58, 44, 479, 22, fill="0.933 0.965 0.992", stroke="0.784 0.875 0.953")
-    _text(commands, "Thank you for your business.", 74, 52, size=9, font="F2")
-    _text(commands, "Visit Again.", 522, 52, size=7, color="0.392 0.455 0.545", align="right")
+        chunk_size = min(row_capacity, remaining_payment_count - 1)
+        chunk = payment_entries[payment_index : payment_index + chunk_size]
+        _draw_payments_chunk(commands, y, chunk)
+        payment_index += len(chunk)
+        commands, y = new_page()
 
-    stream = "\n".join(commands).encode("latin-1", errors="replace")
+    _draw_footer_note(commands)
 
-    objects = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 6 0 R >> >> /Contents 5 0 R >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-    ]
+    objects = _pdf_objects_for_pages(pages)
 
     pdf = bytearray(b"%PDF-1.4\n")
     offsets: list[int] = []
@@ -442,6 +415,148 @@ def _booking_bill_pdf(booking: Booking, company_settings: CompanySettings) -> by
         f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n".encode("ascii")
     )
     return bytes(pdf)
+
+
+def _draw_page_frame(commands: list[str]) -> None:
+    _rect(commands, 34, 34, 527, 774, fill="1 1 1", stroke="0.831 0.858 0.902")
+
+
+def _draw_invoice_header(commands: list[str], booking: Booking, company_settings: CompanySettings) -> None:
+    _line(commands, 58, 730, 537, 730, color="0.059 0.353 0.643", width=2.4)
+    _rect(commands, 58, 742, 86, 50, fill="0.059 0.353 0.643")
+    _text(commands, company_settings.invoice_prefix[:8], 77, 761, size=18, font="F2", color="1 1 1")
+    _text(commands, "FINAL BILL", 160, 779, size=8, font="F2", color="0.392 0.455 0.545")
+    _text(commands, company_settings.company_name.upper(), 160, 754, size=22, font="F2")
+    _text(commands, "Laser, LED, Sharpee and FX lighting supplier", 160, 738, size=9, color="0.392 0.455 0.545")
+    _rect(commands, 400, 744, 137, 48, fill="0.969 0.980 0.988", stroke="0.827 0.859 0.902")
+    _text(commands, "INVOICE NO.", 418, 776, size=7, font="F2", color="0.392 0.455 0.545")
+    _text(commands, f"{company_settings.invoice_prefix}-{booking.booking_no}", 418, 760, size=13, font="F2")
+    _text(commands, _date_text(booking.start_date), 418, 748, size=8, color="0.392 0.455 0.545")
+
+
+def _draw_event_chunk(
+    commands: list[str],
+    y: int,
+    event: BookingEvent,
+    line_items: list[EventLineItem | None],
+    event_total: Decimal,
+    is_first_chunk: bool,
+    is_last_chunk: bool,
+) -> int:
+    row_count = max(len(line_items), 1)
+    event_height = 84 + (row_count * 18)
+    title = event.name if is_first_chunk else f"{event.name} continued"
+
+    _rect(commands, 58, y - event_height, 479, event_height, stroke="0.827 0.859 0.902")
+    _rect(commands, 58, y - 32, 479, 32, fill="0.961 0.973 0.988", stroke="0.827 0.859 0.902")
+    _text(commands, title, 74, y - 21, size=12, font="F2")
+    _text(commands, _date_text(event.event_date), 458, y - 13, size=8, font="F2", align="right")
+    _text(commands, event.venue or "", 458, y - 27, size=8, color="0.392 0.455 0.545", align="right")
+
+    table_y = y - 48
+    _rect(commands, 58, table_y - 16, 479, 16, fill="0.059 0.353 0.643")
+    _text(commands, "Material", 72, table_y - 12, size=8, font="F2", color="1 1 1")
+    _text(commands, "Qty", 355, table_y - 12, size=8, font="F2", color="1 1 1", align="right")
+    _text(commands, "Rate", 440, table_y - 12, size=8, font="F2", color="1 1 1", align="right")
+    _text(commands, "Amount", 522, table_y - 12, size=8, font="F2", color="1 1 1", align="right")
+
+    row_y = table_y - 31
+    for line in line_items:
+        if line is None:
+            _text(commands, "No material added yet.", 72, row_y, size=8, color="0.392 0.455 0.545")
+        else:
+            _text(commands, line.material_name, 72, row_y, size=8)
+            _text(commands, _quantity(line.quantity), 355, row_y, size=8, align="right")
+            _text(commands, _money(line.rate), 440, row_y, size=8, align="right")
+            _text(commands, _money(line.quantity * line.rate), 522, row_y, size=8, align="right")
+        _line(commands, 58, row_y - 7, 537, row_y - 7, color="0.925 0.941 0.961", width=0.6)
+        row_y -= 18
+
+    _rect(commands, 58, y - event_height, 479, 20, fill="0.976 0.984 0.992")
+    subtotal_label = "Event Subtotal" if is_last_chunk else "Continued"
+    subtotal_value = _money(event_total) if is_last_chunk else ""
+    _text(commands, subtotal_label, 420, y - event_height + 7, size=8, font="F2", color="0.059 0.353 0.643", align="right")
+    _text(commands, subtotal_value, 522, y - event_height + 7, size=8, font="F2", color="0.059 0.353 0.643", align="right")
+    return y - event_height - 12
+
+
+def _draw_payments_chunk(commands: list[str], y: int, payment_entries: list[Payment | None]) -> None:
+    payment_box_height = max(58, 42 + (max(len(payment_entries), 1) * 16))
+    bottom_y = y - payment_box_height
+    _rect(commands, 58, bottom_y, 479, payment_box_height, stroke="0.827 0.859 0.902")
+    _text(commands, "Payments continued", 74, y - 22, size=12, font="F2")
+    payment_y = y - 44
+    for payment in payment_entries:
+        if payment is None:
+            _text(commands, "No advance payment recorded.", 74, payment_y, size=8, color="0.392 0.455 0.545")
+        else:
+            _text(commands, _date_text(payment.payment_date), 74, payment_y, size=8, color="0.392 0.455 0.545")
+            _text(commands, payment.mode, 320, payment_y, size=8, align="right")
+            _text(commands, _money(payment.amount), 522, payment_y, size=8, font="F2", align="right")
+        payment_y -= 16
+
+
+def _draw_summary(
+    commands: list[str],
+    payment_entries: list[Payment | None],
+    subtotal: Decimal,
+    paid: Decimal,
+    balance: Decimal,
+    y: int,
+) -> None:
+    payment_box_height = max(98, 42 + (max(len(payment_entries), 1) * 16))
+    bottom_y = y - payment_box_height
+    _rect(commands, 58, bottom_y, 270, payment_box_height, stroke="0.827 0.859 0.902")
+    _text(commands, "Payments", 74, y - 22, size=12, font="F2")
+    payment_y = y - 44
+    for payment in payment_entries:
+        if payment is None:
+            _text(commands, "No advance payment recorded.", 74, payment_y, size=8, color="0.392 0.455 0.545")
+        else:
+            _text(commands, _date_text(payment.payment_date), 74, payment_y, size=8, color="0.392 0.455 0.545")
+            _text(commands, payment.mode, 210, payment_y, size=8, align="right")
+            _text(commands, _money(payment.amount), 310, payment_y, size=8, font="F2", align="right")
+        payment_y -= 16
+
+    totals_height = 98
+    totals_y = y - totals_height
+    _rect(commands, 350, totals_y, 187, totals_height, fill="0.067 0.094 0.153")
+    _text(commands, "Subtotal", 368, totals_y + 70, size=9, color="0.796 0.835 0.882")
+    _text(commands, _money(subtotal), 518, totals_y + 70, size=9, font="F2", color="1 1 1", align="right")
+    _text(commands, "Advance Paid", 368, totals_y + 48, size=9, color="0.796 0.835 0.882")
+    _text(commands, _money(paid), 518, totals_y + 48, size=9, font="F2", color="1 1 1", align="right")
+    _line(commands, 366, totals_y + 32, 521, totals_y + 32, color="0.247 0.290 0.357", width=0.8)
+    _text(commands, "Balance Due", 368, totals_y + 16, size=11, color="0.796 0.835 0.882")
+    _text(commands, _money(balance), 518, totals_y + 16, size=11, font="F2", color="1 1 1", align="right")
+
+
+def _draw_footer_note(commands: list[str]) -> None:
+    _rect(commands, 58, 44, 479, 22, fill="0.933 0.965 0.992", stroke="0.784 0.875 0.953")
+    _text(commands, "Thank you for your business.", 74, 52, size=9, font="F2")
+    _text(commands, "Visit Again.", 522, 52, size=7, color="0.392 0.455 0.545", align="right")
+
+
+def _pdf_objects_for_pages(pages: list[list[str]]) -> list[bytes]:
+    page_object_numbers = [6 + (index * 2) for index in range(len(pages))]
+    kids = " ".join(f"{object_number} 0 R" for object_number in page_object_numbers)
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        f"<< /Type /Pages /Kids [{kids}] /Count {len(pages)} >>".encode("ascii"),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
+    ]
+
+    for index, page_commands in enumerate(pages):
+        content_object_number = 5 + (index * 2)
+        stream = "\n".join(page_commands).encode("latin-1", errors="replace")
+        objects.append(b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream")
+        objects.append(
+            (
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+                f"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {content_object_number} 0 R >>"
+            ).encode("ascii")
+        )
+    return objects
 
 
 def _pdf_escape(value: str) -> str:
