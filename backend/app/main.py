@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import bookings, clients, event_types, items
 from app.core.config import settings
-from app.core.database import Base, engine
+from app.core.database import Base, SessionLocal, engine
+from app.services.seed import seed_database
 
 # FastAPI application object. All API routers below are attached to this object,
 # so Uvicorn runs this module as the backend entry point.
@@ -36,5 +37,8 @@ def health_check() -> dict[str, str]:
 
 @app.on_event("startup")
 def create_database_tables() -> None:
-    """Create missing database tables from SQLAlchemy models when the app starts."""
+    """Create missing database tables and starter dropdown values on startup."""
+
     Base.metadata.create_all(bind=engine)
+    with SessionLocal() as db:
+        seed_database(db)

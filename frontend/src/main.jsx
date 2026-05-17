@@ -470,17 +470,18 @@ function App() {
       return;
     }
 
-    const currentBalance = bookingTotals(selectedBooking, paymentList).balance;
+    const totals = bookingTotals(selectedBooking, paymentList);
+    const currentBalance = totals.balance;
     const amount = Number(payload.amount);
     if (!Number.isFinite(amount) || amount <= 0) {
       alert("Please add payment amount greater than 0.");
       return;
     }
-    if (currentBalance <= 0) {
+    if (totals.subtotal > 0 && currentBalance <= 0) {
       alert("Payment is already done for this booking.");
       return;
     }
-    if (amount > currentBalance) {
+    if (totals.subtotal > 0 && amount > currentBalance) {
       alert("Payment amount cannot be greater than current balance.");
       return;
     }
@@ -1220,6 +1221,7 @@ function LineItemModal({ items, isSaving, onClose, onSubmit }) {
 function PaymentModal({ balance, isSaving, onClose, onSubmit }) {
   // Payment form supports partial payments and final payment against the balance.
   const safeBalance = Math.max(balance, 0);
+  const hasBalance = safeBalance > 0;
   const [form, setForm] = useState({
     type: "Partial Payment",
     amount: "",
@@ -1231,7 +1233,7 @@ function PaymentModal({ balance, isSaving, onClose, onSubmit }) {
     setForm({
       ...form,
       type,
-      amount: type === "Final Payment" ? String(safeBalance) : form.amount
+      amount: type === "Final Payment" && hasBalance ? String(safeBalance) : form.amount
     });
   }
 
@@ -1248,7 +1250,7 @@ function PaymentModal({ balance, isSaving, onClose, onSubmit }) {
             <option>Final Payment</option>
           </select>
         </label>
-        <label>Amount<input max={safeBalance || undefined} min="1" required type="number" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} /></label>
+        <label>Amount<input max={hasBalance ? safeBalance : undefined} min="1" required type="number" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} /></label>
         <label>
           Mode
           <select value={form.mode} onChange={(event) => setForm({ ...form, mode: event.target.value })}>
@@ -1262,7 +1264,7 @@ function PaymentModal({ balance, isSaving, onClose, onSubmit }) {
         <div className="payment-balance-note">Current balance: <strong>{formatCurrency(safeBalance)}</strong></div>
         <div className="modal-actions">
           <button className="ghost-button" disabled={isSaving} onClick={onClose} type="button">Cancel</button>
-          <button className="primary-action" disabled={isSaving || safeBalance <= 0} type="submit">{isSaving ? "Saving..." : "Save Payment"}</button>
+          <button className="primary-action" disabled={isSaving} type="submit">{isSaving ? "Saving..." : "Save Payment"}</button>
         </div>
       </form>
     </Modal>
