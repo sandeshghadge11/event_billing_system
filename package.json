@@ -1,0 +1,40 @@
+{
+  "name": "event-billing-system-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop shell for the Event Billing System.",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "desktop": "npm --prefix frontend run build && electron .",
+    "desktop:pack": "npm --prefix frontend run build && electron-builder --dir",
+    "desktop:dist": "npm --prefix frontend run build && electron-builder",
+    "desktop:dist:win": "npm --prefix frontend run build && electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.prasadfx.eventbilling",
+    "productName": "Prasad FX Billing",
+    "asar": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/**/*",
+      "frontend/dist/**/*",
+      "backend/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "desktop/main.cjs"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    }
+  }
+}

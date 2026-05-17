@@ -24,7 +24,10 @@ import "./styles/app.css";
 // Backend API root. On another device, 127.0.0.1 points at that device, so
 // default to the same host that served the frontend and only change the port.
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || `http://${window.location.hostname}:8000/api`;
+  import.meta.env.VITE_API_BASE_URL ||
+  (window.location.protocol === "file:"
+    ? "http://127.0.0.1:8000/api"
+    : `http://${window.location.hostname}:8000/api`);
 
 // Sidebar/page configuration. Each item maps a page id to a label and icon.
 const navItems = [

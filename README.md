@@ -74,6 +74,29 @@ API health check:
 http://127.0.0.1:8000/api/health
 ```
 
+## Desktop App Branch
+
+Windows desktop setup lives on:
+
+```bash
+git switch branch_name_desktop_ready
+```
+
+See `DESKTOP_SETUP.md` for the Electron-based Windows setup. For the easiest
+Windows bootstrap, install MySQL Server with root password `root`, then run:
+
+```cmd
+scripts\install-windows.bat
+```
+
+For manual PowerShell setup, install Git, Node.js LTS, Python 3.12+, and MySQL
+Server, then run:
+
+```powershell
+.\scripts\setup-windows.ps1
+.\scripts\run-windows-desktop.ps1
+```
+
 ## Data Model
 
 ```text
